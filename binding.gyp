@@ -4,7 +4,7 @@
             "target_name": "xmljs",
             "product_extension": "node",
             "type": "shared_library",
-            "include_dirs": ["vendor/libxml/include", "<!@(node -p \"require('node-addon-api').include_dir\")"],
+            "include_dirs": ["vendor/libxml/include", "<!(node -p \"require('node-addon-api').include.replace(/\\\"/g, '')\")"],
             "cflags": ["-Wall"],
             "xcode_settings": {"OTHER_CFLAGS": ["-Wall"]},
             "win_delay_load_hook": "true",
