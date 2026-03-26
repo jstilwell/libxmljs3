@@ -71,12 +71,12 @@ describe('memory management', () => {
     new Promise((done) => {
       const xml_memory_before_document = libxml.memoryUsage();
       let doc = makeDocument();
-      // eslint-disable-next-line no-unused-vars
-      let middle = doc.get('//middle');
+       
+      let _middle = doc.get('//middle');
       let inner = doc.get('//inner');
 
       inner.remove(); // v0.14.3, v0.15: proxy ref'd parent but can't unref when destroyed
-      doc = middle = inner = null;
+      doc = _middle = inner = null;
       process.nextTick(() => {
         collectGarbage();
         expect(libxml.memoryUsage() <= xml_memory_before_document).toBeTruthy();

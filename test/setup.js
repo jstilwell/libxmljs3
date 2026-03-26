@@ -1,4 +1,4 @@
-const libxml = require('../index');
+const _libxml = require('../index');
 
 if (!global.gc) {
   throw new Error('must run with --expose_gc for memory management tests');
@@ -28,6 +28,5 @@ function collectGarbage(minCycles = 3, maxCycles = 15) {
 afterEach(() => {
   collectGarbage(8);
   // Memory leak test
-  // eslint-disable-next-line jest/no-standalone-expect
   // expect(libxml.nodeCount()).not.toBeGreaterThan(0);
 });

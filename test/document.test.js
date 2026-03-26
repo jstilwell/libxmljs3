@@ -12,7 +12,7 @@ function rssAfterGarbageCollection(maxCycles = 10) {
     freedMemory = rss - rssAfterGc;
     rss = rssAfterGc;
 
-    // eslint-disable-next-line no-param-reassign
+     
     maxCycles -= 1;
   } while (freedMemory !== 0 && maxCycles > 0);
 
@@ -23,27 +23,27 @@ describe('document', () => {
   const VALIDATE_RSS_TOLERANCE = 1;
 
   it('getDtd', () => {
-    let doc = libxml.parseXmlString(
+    let doc = libxml.parseXml(
       '<?xml version="1.0" encoding="UTF-8"?>\n<root></root>'
     );
     let dtd = doc.getDtd();
 
     expect(dtd).toBeNull();
-    doc = libxml.parseXmlString(
+    doc = libxml.parseXml(
       '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n<root></root>'
     );
     dtd = doc.getDtd();
     expect('html').toBe(dtd.name);
     expect(dtd.externalId).toBeNull();
     expect(dtd.systemId).toBeNull();
-    doc = libxml.parseXmlString(
+    doc = libxml.parseXml(
       '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html SYSTEM "http://www.w3.org/TR/html4/strict.dtd">\n<root></root>'
     );
     dtd = doc.getDtd();
     expect('html').toBe(dtd.name);
     expect(dtd.externalId).toBeNull();
     expect('http://www.w3.org/TR/html4/strict.dtd').toBe(dtd.systemId);
-    doc = libxml.parseXmlString(
+    doc = libxml.parseXml(
       '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n<root></root>'
     );
     dtd = doc.getDtd();
@@ -485,7 +485,7 @@ describe('document', () => {
       }
 
       const xml_only_comments = '<!-- empty -->';
-      const doc = libxml.parseHtmlString(xml_only_comments);
+      const doc = libxml.parseHtml(xml_only_comments);
 
       expect(null).toBe(doc.root());
 

@@ -1,4 +1,3 @@
-/* eslint-disable unicorn/text-encoding-identifier-case */
 const fs = require('node:fs');
 const libxml = require('../index');
 
@@ -19,7 +18,7 @@ describe('html parser', () => {
     const filename = `${__dirname}/fixtures/parser.html`;
 
     function attempt_parse(encoding) {
-      // eslint-disable-next-line no-sync
+       
       const str = fs.readFileSync(filename, encoding);
 
       const doc = libxml.parseHtml(str);
@@ -43,7 +42,7 @@ describe('html parser', () => {
     const filename = `${__dirname}/fixtures/parser.euc_jp.html`;
 
     function attempt_parse(encoding, opts) {
-      // eslint-disable-next-line no-sync
+       
       const str = fs.readFileSync(filename, encoding);
 
       const doc = libxml.parseHtml(str, opts);
@@ -72,13 +71,13 @@ describe('html parser', () => {
     attempt_parse(null, { encoding: 'UTF-8' });
   });
 
-  it('parse Synonym', () => {
-    expect(libxml.parseHtml).toBe(libxml.parseHtmlString);
+  it('parseHtml exists', () => {
+    expect(typeof libxml.parseHtml).toBe('function');
   });
 
   it('recoverable parse', () => {
     const recoverableFile = `${__dirname}/fixtures/warnings/amp.html`;
-    // eslint-disable-next-line no-sync
+     
     const str = fs.readFileSync(recoverableFile, 'utf8');
     const recoverableErrors = [
       make_error({

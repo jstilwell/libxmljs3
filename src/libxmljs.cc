@@ -1,6 +1,6 @@
 // Copyright 2009, Squish Tech, LLC.
 
-#include <v8.h>
+#include <napi.h>
 
 #include <libxml/xmlmemory.h>
 
@@ -11,7 +11,6 @@
 #include "xml_sax_parser.h"
 #include "xml_textwriter.h"
 
-using namespace v8;
 namespace libxmljs {
 
 // ensure destruction at exit time
@@ -21,27 +20,36 @@ LibXMLJS LibXMLJS::instance;
 // track how much memory libxml2 is using
 int xml_memory_used = 0;
 
-// How often we report memory usage changes back to V8.
+// How often we report memory usage changes back to the JS engine.
 const int nan_adjust_external_memory_threshold = 1024 * 1024;
 
 // track how many nodes haven't been freed
 int nodeCount = 0;
+
+// Global napi_env stored during module Init so that memory wrappers
+// (called from libxml2's allocator hooks) can report memory changes.
+// Set to nullptr during module cleanup to guard against post-shutdown calls.
+static napi_env global_env = nullptr;
 
 void adjustExternalMemory() {
   const int diff = xmlMemUsed() - xml_memory_used;
 
   if (abs(diff) > nan_adjust_external_memory_threshold) {
     xml_memory_used += diff;
-    Nan::AdjustExternalMemory(diff);
+    if (global_env != nullptr) {
+      int64_t adjusted_value = 0;
+      napi_adjust_external_memory(global_env, static_cast<int64_t>(diff),
+                                  &adjusted_value);
+    }
   }
 }
 
-// wrapper for xmlMemMalloc to update v8's knowledge of memory used
+// wrapper for xmlMemMalloc to update the engine's knowledge of memory used
 // the GC relies on this information
 void *xmlMemMallocWrap(size_t size) {
   void *res = xmlMemMalloc(size);
 
-  // no need to udpate memory if we didn't allocate
+  // no need to update memory if we didn't allocate
   if (!res) {
     return res;
   }
@@ -50,28 +58,27 @@ void *xmlMemMallocWrap(size_t size) {
   return res;
 }
 
-// wrapper for xmlMemFree to update v8's knowledge of memory used
+// wrapper for xmlMemFree to update the engine's knowledge of memory used
 // the GC relies on this information
 void xmlMemFreeWrap(void *p) {
   xmlMemFree(p);
 
-  // if v8 is no longer running, don't try to adjust memory
-  // this happens when the v8 vm is shutdown and the program is exiting
-  // our cleanup routines for libxml will be called (freeing memory)
-  // but v8 is already offline and does not need to be informed
-  // trying to adjust after shutdown will result in a fatal error
-  if (Isolate::GetCurrent() == 0 || Isolate::GetCurrent()->IsDead()) {
+  // if the JS engine is no longer running, don't try to adjust memory.
+  // this happens when the VM is shutting down and cleanup routines for
+  // libxml2 are called (freeing memory) but the engine is already offline.
+  // trying to adjust after shutdown will result in a fatal error.
+  if (global_env == nullptr) {
     return;
   }
 
   adjustExternalMemory();
 }
 
-// wrapper for xmlMemRealloc to update v8's knowledge of memory used
+// wrapper for xmlMemRealloc to update the engine's knowledge of memory used
 void *xmlMemReallocWrap(void *ptr, size_t size) {
   void *res = xmlMemRealloc(ptr, size);
 
-  // if realloc fails, no need to update v8 memory state
+  // if realloc fails, no need to update memory state
   if (!res) {
     return res;
   }
@@ -80,11 +87,12 @@ void *xmlMemReallocWrap(void *ptr, size_t size) {
   return res;
 }
 
-// wrapper for xmlMemoryStrdupWrap to update v8's knowledge of memory used
+// wrapper for xmlMemoryStrdupWrap to update the engine's knowledge of memory
+// used
 char *xmlMemoryStrdupWrap(const char *str) {
   char *res = xmlMemoryStrdup(str);
 
-  // if strdup fails, no need to update v8 memory state
+  // if strdup fails, no need to update memory state
   if (!res) {
     return res;
   }
@@ -168,12 +176,10 @@ LibXMLJS::LibXMLJS() {
 
 LibXMLJS::~LibXMLJS() { xmlCleanupParser(); }
 
-Local<Object> listFeatures() {
-  Nan::EscapableHandleScope scope;
-  Local<Object> target = Nan::New<Object>();
+Napi::Object listFeatures(Napi::Env env) {
+  Napi::Object target = Napi::Object::New(env);
 #define FEAT(x)                                                                \
-  Nan::Set(target, Nan::New<String>(#x).ToLocalChecked(),                      \
-           Nan::New<Boolean>(xmlHasFeature(XML_WITH_##x)))
+  target.Set(#x, Napi::Boolean::New(env, xmlHasFeature(XML_WITH_##x)))
   // See enum xmlFeature in parser.h
   FEAT(THREAD);
   FEAT(TREE);
@@ -208,45 +214,59 @@ Local<Object> listFeatures() {
   FEAT(ZLIB);
   FEAT(ICU);
   FEAT(LZMA);
-  return scope.Escape(target);
+#undef FEAT
+  return target;
 }
 
-NAN_METHOD(XmlMemUsed) {
-  Nan::HandleScope scope;
-  return info.GetReturnValue().Set(Nan::New<Int32>(xmlMemUsed()));
+Napi::Value XmlMemUsed(const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(), xmlMemUsed());
 }
 
-NAN_METHOD(XmlNodeCount) {
-  Nan::HandleScope scope;
-  return info.GetReturnValue().Set(Nan::New<Int32>(nodeCount));
+Napi::Value XmlNodeCount(const Napi::CallbackInfo &info) {
+  return Napi::Number::New(info.Env(), nodeCount);
 }
 
-NAN_MODULE_INIT(init) {
-  Nan::HandleScope scope;
+Napi::Object Init(Napi::Env env, Napi::Object exports) {
+  // Store the env for use in memory wrapper callbacks.
+  // Cleared during module teardown via the cleanup hook below.
+  global_env = env;
 
-  XmlDocument::Initialize(target);
-  XmlSaxParser::Initialize(target);
-  XmlTextWriter::Initialize(target);
+  // Register a cleanup hook so that global_env is nulled out before the
+  // env is torn down, preventing post-shutdown calls to napi_adjust_external_memory.
+  napi_add_env_cleanup_hook(env, [](void *) { global_env = nullptr; }, nullptr);
 
-  Nan::Set(target, Nan::New<String>("libxml_version").ToLocalChecked(),
-           Nan::New<String>(LIBXML_DOTTED_VERSION).ToLocalChecked());
+  XmlDocument::Init(env, exports);
+  XmlSaxParser::Initialize(env, exports);
+  XmlSaxPushParser::Initialize(env, exports);
+  XmlTextWriter::Initialize(env, exports);
 
-  Nan::Set(target, Nan::New<String>("libxml_parser_version").ToLocalChecked(),
-           Nan::New<String>(xmlParserVersion).ToLocalChecked());
+  exports.Set("libxml_version",
+              Napi::String::New(env, LIBXML_DOTTED_VERSION));
 
-  Nan::Set(target, Nan::New<String>("libxml_debug_enabled").ToLocalChecked(),
-           Nan::New<Boolean>(debugging));
+  exports.Set("libxml_parser_version",
+              Napi::String::New(env, xmlParserVersion));
 
-  Nan::Set(target, Nan::New<String>("features").ToLocalChecked(),
-           listFeatures());
+  exports.Set("libxml_debug_enabled",
+              Napi::Boolean::New(env, debugging));
 
-  Nan::Set(target, Nan::New<String>("libxml").ToLocalChecked(), target);
+  exports.Set("features", listFeatures(env));
 
-  Nan::SetMethod(target, "xmlMemUsed", XmlMemUsed);
+  // self-reference so callers can do require('libxmljs').libxml
+  exports.Set("libxml", exports);
 
-  Nan::SetMethod(target, "xmlNodeCount", XmlNodeCount);
+  exports.Set("xmlMemUsed",
+              Napi::Function::New(env, XmlMemUsed, "xmlMemUsed"));
+
+  exports.Set("xmlNodeCount",
+              Napi::Function::New(env, XmlNodeCount, "xmlNodeCount"));
+
+  return exports;
 }
-
-NODE_MODULE(xmljs, init)
 
 } // namespace libxmljs
+
+static Napi::Object InitModule(Napi::Env env, Napi::Object exports) {
+  return libxmljs::Init(env, exports);
+}
+
+NODE_API_MODULE(xmljs, InitModule)

@@ -2,38 +2,38 @@
 #ifndef SRC_XML_NAMESPACE_H_
 #define SRC_XML_NAMESPACE_H_
 
-#include <node.h>
-
-#include "nan.h"
+#include <napi.h>
 #include <libxml/tree.h>
 
 namespace libxmljs {
 
-class XmlNamespace : public Nan::ObjectWrap {
+class XmlNamespace : public Napi::ObjectWrap<XmlNamespace> {
 public:
   xmlNs *xml_obj;
 
   xmlDoc *context; // reference-managed context
 
-  static void Initialize(v8::Local<v8::Object> target);
-  static Nan::Persistent<v8::FunctionTemplate> constructor_template;
+  static Napi::FunctionReference constructor;
 
-  explicit XmlNamespace(xmlNs *ns);
-  XmlNamespace(xmlNs *node, const char *prefix, const char *href);
+  XmlNamespace(const Napi::CallbackInfo& info);
   ~XmlNamespace();
 
-  static v8::Local<v8::Object> New(xmlNs *ns);
+  // Factory: wraps an existing xmlNs, reusing JS wrapper if already created
+  static Napi::Object New(Napi::Env env, xmlNs *ns);
 
-protected:
-  static NAN_METHOD(New);
-  static NAN_METHOD(Href);
-  static NAN_METHOD(Prefix);
+  // Called after construction via constructor.New({}) to bind the native pointer
+  void initFromNative(xmlNs *ns);
 
-  v8::Local<v8::Value> get_href();
-  v8::Local<v8::Value> get_prefix();
+  static void Init(Napi::Env env, Napi::Object exports);
 
-  friend class Node;
+  Napi::Value Href(const Napi::CallbackInfo& info);
+  Napi::Value Prefix(const Napi::CallbackInfo& info);
+
+private:
+  Napi::Value get_href(Napi::Env env);
+  Napi::Value get_prefix(Napi::Env env);
 };
+
 } // namespace libxmljs
 
 #endif // SRC_XML_NAMESPACE_H_

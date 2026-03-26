@@ -14,39 +14,38 @@
 #include <libxml/xmlsave.h>
 #include <libxml/xmlschemas.h>
 
+#include "xml_attribute.h"
+#include "xml_comment.h"
 #include "xml_document.h"
 #include "xml_element.h"
 #include "xml_namespace.h"
 #include "xml_node.h"
+#include "xml_pi.h"
 #include "xml_syntax_error.h"
-
-using namespace v8;
+#include "xml_text.h"
 
 namespace libxmljs {
 
-Nan::Persistent<FunctionTemplate> XmlDocument::constructor_template;
+Napi::FunctionReference XmlDocument::constructor;
 
-NAN_METHOD(XmlDocument::Encoding) {
-  Nan::HandleScope scope;
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  assert(document);
+Napi::Value XmlDocument::Encoding(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   // if no args, get the encoding
-  if (info.Length() == 0 || info[0]->IsUndefined()) {
-    if (document->xml_obj->encoding)
-      return info.GetReturnValue().Set(
-          Nan::New<String>(
-              (const char *)document->xml_obj->encoding,
-              xmlStrlen((const xmlChar *)document->xml_obj->encoding))
-              .ToLocalChecked());
+  if (info.Length() == 0 || info[0].IsUndefined()) {
+    if (xml_obj->encoding)
+      return Napi::String::New(
+          env,
+          (const char *)xml_obj->encoding,
+          xmlStrlen((const xmlChar *)xml_obj->encoding));
 
-    return info.GetReturnValue().Set(Nan::Null());
+    return env.Null();
   }
 
   // set the encoding otherwise
-  Nan::Utf8String encoding(info[0]);
-  document->setEncoding(*encoding);
-  return info.GetReturnValue().Set(info.This());
+  std::string encoding = info[0].As<Napi::String>().Utf8Value();
+  setEncoding(encoding.c_str());
+  return info.This();
 }
 
 void XmlDocument::setEncoding(const char *encoding) {
@@ -57,262 +56,231 @@ void XmlDocument::setEncoding(const char *encoding) {
   xml_obj->encoding = xmlStrdup((const xmlChar *)encoding);
 }
 
-NAN_METHOD(XmlDocument::Version) {
-  Nan::HandleScope scope;
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  assert(document);
+Napi::Value XmlDocument::Version(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
-  if (document->xml_obj->version)
-    return info.GetReturnValue().Set(
-        Nan::New<String>((const char *)document->xml_obj->version,
-                         xmlStrlen((const xmlChar *)document->xml_obj->version))
-            .ToLocalChecked());
+  if (xml_obj->version)
+    return Napi::String::New(
+        env,
+        (const char *)xml_obj->version,
+        xmlStrlen((const xmlChar *)xml_obj->version));
 
-  return info.GetReturnValue().Set(Nan::Null());
+  return env.Null();
 }
 
-NAN_METHOD(XmlDocument::Root) {
-  Nan::HandleScope scope;
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  assert(document);
+Napi::Value XmlDocument::Root(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
-  xmlNode *root = xmlDocGetRootElement(document->xml_obj);
+  xmlNode *root = xmlDocGetRootElement(xml_obj);
 
-  if (info.Length() == 0 || info[0]->IsUndefined()) {
+  if (info.Length() == 0 || info[0].IsUndefined()) {
     if (!root) {
-      return info.GetReturnValue().Set(Nan::Null());
+      return env.Null();
     }
-    return info.GetReturnValue().Set(XmlElement::New(root));
+    return XmlNode::New(env, root);
   }
 
   if (root != NULL) {
-    return Nan::ThrowError("Holder document already has a root node");
+    Napi::Error::New(env, "Holder document already has a root node")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
   // set the element as the root element for the document
   // allows for proper retrieval of root later
-  XmlElement *element = Nan::ObjectWrap::Unwrap<XmlElement>(
-      Nan::To<Object>(info[0]).ToLocalChecked());
-  assert(element);
-  xmlDocSetRootElement(document->xml_obj, element->xml_obj);
-  element->ref_wrapped_ancestor();
-  return info.GetReturnValue().Set(info[0]);
+  XmlNode *node = XmlNode::Unwrap(env, info[0].As<Napi::Object>());
+  assert(node);
+  xmlDocSetRootElement(xml_obj, node->xml_obj);
+  node->ref_wrapped_ancestor();
+  return info[0];
 }
 
-NAN_METHOD(XmlDocument::GetDtd) {
-  Nan::HandleScope scope;
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  assert(document);
+Napi::Value XmlDocument::GetDtd(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
-  xmlDtdPtr dtd = xmlGetIntSubset(document->xml_obj);
+  xmlDtdPtr dtd = xmlGetIntSubset(xml_obj);
 
   if (!dtd) {
-    return info.GetReturnValue().Set(Nan::Null());
+    return env.Null();
   }
 
   const char *name = (const char *)dtd->name;
   const char *extId = (const char *)dtd->ExternalID;
   const char *sysId = (const char *)dtd->SystemID;
 
-  Local<Object> dtdObj = Nan::New<Object>();
-  Local<Value> nameValue = Nan::Null();
-  Local<Value> extValue = Nan::Null();
-  Local<Value> sysValue = Nan::Null();
+  Napi::Object dtdObj = Napi::Object::New(env);
+  Napi::Value nameValue = env.Null();
+  Napi::Value extValue = env.Null();
+  Napi::Value sysValue = env.Null();
 
   if (name != NULL) {
-    nameValue = Nan::New<String>(name, strlen(name)).ToLocalChecked();
+    nameValue = Napi::String::New(env, name, strlen(name));
   }
 
   if (extId != NULL) {
-    extValue = Nan::New<String>(extId, strlen(extId)).ToLocalChecked();
+    extValue = Napi::String::New(env, extId, strlen(extId));
   }
 
   if (sysId != NULL) {
-    sysValue = Nan::New<String>(sysId, strlen(sysId)).ToLocalChecked();
+    sysValue = Napi::String::New(env, sysId, strlen(sysId));
   }
 
-  Nan::Set(dtdObj, Nan::New<String>("name").ToLocalChecked(), nameValue);
+  dtdObj.Set("name", nameValue);
+  dtdObj.Set("externalId", extValue);
+  dtdObj.Set("systemId", sysValue);
 
-  Nan::Set(dtdObj, Nan::New<String>("externalId").ToLocalChecked(), extValue);
-
-  Nan::Set(dtdObj, Nan::New<String>("systemId").ToLocalChecked(), sysValue);
-
-  return info.GetReturnValue().Set(dtdObj);
+  return dtdObj;
 }
 
-NAN_METHOD(XmlDocument::SetDtd) {
-  Nan::HandleScope scope;
+Napi::Value XmlDocument::SetDtd(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  assert(document);
-
-  Nan::Utf8String name(info[0]);
-
-  Local<Value> extIdOpt;
-  Local<Value> sysIdOpt;
-  if (info.Length() > 1 && info[1]->IsString()) {
-    extIdOpt = info[1];
-  }
-  if (info.Length() > 2 && info[2]->IsString()) {
-    sysIdOpt = info[2];
-  }
-
-  Nan::Utf8String extIdRaw(extIdOpt);
-  Nan::Utf8String sysIdRaw(sysIdOpt);
+  std::string name = info[0].As<Napi::String>().Utf8Value();
 
   // must be set to null in order for xmlCreateIntSubset to ignore them
-  const char *extId = (extIdRaw.length()) ? *extIdRaw : NULL;
-  const char *sysId = (sysIdRaw.length()) ? *sysIdRaw : NULL;
+  const char *extId = NULL;
+  const char *sysId = NULL;
+  std::string extIdStr, sysIdStr;
+
+  if (info.Length() > 1 && info[1].IsString()) {
+    extIdStr = info[1].As<Napi::String>().Utf8Value();
+    if (!extIdStr.empty()) {
+      extId = extIdStr.c_str();
+    }
+  }
+
+  if (info.Length() > 2 && info[2].IsString()) {
+    sysIdStr = info[2].As<Napi::String>().Utf8Value();
+    if (!sysIdStr.empty()) {
+      sysId = sysIdStr.c_str();
+    }
+  }
 
   // No good way of unsetting the doctype if it is previously set...this allows
   // us to.
-  xmlDtdPtr dtd = xmlGetIntSubset(document->xml_obj);
+  xmlDtdPtr dtd = xmlGetIntSubset(xml_obj);
 
   xmlUnlinkNode((xmlNodePtr)dtd);
   xmlFreeNode((xmlNodePtr)dtd);
 
-  xmlCreateIntSubset(document->xml_obj, (const xmlChar *)*name,
+  xmlCreateIntSubset(xml_obj, (const xmlChar *)name.c_str(),
                      (const xmlChar *)extId, (const xmlChar *)sysId);
 
-  return info.GetReturnValue().Set(info.This());
+  return info.This();
 }
 
-NAN_METHOD(XmlDocument::ToString) {
-  Nan::HandleScope scope;
-
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  assert(document);
+Napi::Value XmlDocument::ToString(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   int options = 0;
   const char *encoding = "UTF-8";
-  Local<Value> encodingOpt = Nan::Null();
+  std::string encodingStr;
 
-  if (info[0]->IsObject()) {
-    Local<Object> obj = Nan::To<Object>(info[0]).ToLocalChecked();
+  if (info.Length() > 0 && info[0].IsObject()) {
+    Napi::Object obj = info[0].As<Napi::Object>();
 
     // drop the xml declaration
-    if (Nan::Get(obj, Nan::New<String>("declaration").ToLocalChecked())
-            .ToLocalChecked()
-            ->IsFalse()) {
+    Napi::Value declarationVal = obj.Get("declaration");
+    if (declarationVal.IsBoolean() && !declarationVal.As<Napi::Boolean>().Value()) {
       options |= XML_SAVE_NO_DECL;
     }
 
     // format save output
-    if (Nan::Get(obj, Nan::New<String>("format").ToLocalChecked())
-            .ToLocalChecked()
-            ->IsTrue()) {
+    Napi::Value formatVal = obj.Get("format");
+    if (formatVal.IsBoolean() && formatVal.As<Napi::Boolean>().Value()) {
       options |= XML_SAVE_FORMAT;
     }
 
     // no empty tags (only works with XML) ex: <title></title> becomes <title/>
-    if (Nan::Get(obj, Nan::New<String>("selfCloseEmpty").ToLocalChecked())
-            .ToLocalChecked()
-            ->IsFalse()) {
+    Napi::Value selfCloseVal = obj.Get("selfCloseEmpty");
+    if (selfCloseVal.IsBoolean() && !selfCloseVal.As<Napi::Boolean>().Value()) {
       options |= XML_SAVE_NO_EMPTY;
     }
 
     // format with non-significant whitespace
-    if (Nan::Get(obj, Nan::New<String>("whitespace").ToLocalChecked())
-            .ToLocalChecked()
-            ->IsTrue()) {
+    Napi::Value whitespaceVal = obj.Get("whitespace");
+    if (whitespaceVal.IsBoolean() && whitespaceVal.As<Napi::Boolean>().Value()) {
       options |= XML_SAVE_WSNONSIG;
     }
 
-    encodingOpt =
-    Nan::Get(obj, Nan::New<String>("encoding").ToLocalChecked())
-        .ToLocalChecked();
-
-    Local<Value> type = Nan::Get(obj, Nan::New<String>("type").ToLocalChecked())
-                            .ToLocalChecked();
-    if (Nan::Equals(type, Nan::New<String>("XML").ToLocalChecked())
-            .ToChecked() ||
-        Nan::Equals(type, Nan::New<String>("xml").ToLocalChecked())
-            .ToChecked()) {
-      options |= XML_SAVE_AS_XML; // force XML serialization on HTML doc
-    } else if (Nan::Equals(type, Nan::New<String>("HTML").ToLocalChecked())
-                   .ToChecked() ||
-               Nan::Equals(type, Nan::New<String>("html").ToLocalChecked())
-                   .ToChecked()) {
-      options |= XML_SAVE_AS_HTML; // force HTML serialization on XML doc
-      // if the document is XML and we want formatted HTML output
-      // we must use the XHTML serializer because the default HTML
-      // serializer only formats node->type = HTML_NODE and not XML_NODEs
-      if ((options & XML_SAVE_FORMAT) && (options & XML_SAVE_XHTML) == false) {
-        options |= XML_SAVE_XHTML;
-      }
-    } else if (Nan::Equals(type, Nan::New<String>("XHTML").ToLocalChecked())
-                   .ToChecked() ||
-               Nan::Equals(type, Nan::New<String>("xhtml").ToLocalChecked())
-                   .ToChecked()) {
-      options |= XML_SAVE_XHTML; // force XHTML serialization
+    Napi::Value encodingOpt = obj.Get("encoding");
+    if (encodingOpt.IsString()) {
+      encodingStr = encodingOpt.As<Napi::String>().Utf8Value();
+      encoding = encodingStr.c_str();
     }
-  } else if (info.Length() == 0 || Nan::To<bool>(info[0]).FromMaybe(true)) {
-    options |= XML_SAVE_FORMAT;
-  }
 
-  if (encodingOpt->IsString()) {
-    Nan::Utf8String encoding_(Nan::To<String>(encodingOpt).ToLocalChecked());
-    encoding = *encoding_;
+    Napi::Value typeVal = obj.Get("type");
+    if (typeVal.IsString()) {
+      std::string typeStr = typeVal.As<Napi::String>().Utf8Value();
+      if (typeStr == "XML" || typeStr == "xml") {
+        options |= XML_SAVE_AS_XML; // force XML serialization on HTML doc
+      } else if (typeStr == "HTML" || typeStr == "html") {
+        options |= XML_SAVE_AS_HTML; // force HTML serialization on XML doc
+        // if the document is XML and we want formatted HTML output
+        // we must use the XHTML serializer because the default HTML
+        // serializer only formats node->type = HTML_NODE and not XML_NODEs
+        if ((options & XML_SAVE_FORMAT) && (options & XML_SAVE_XHTML) == false) {
+          options |= XML_SAVE_XHTML;
+        }
+      } else if (typeStr == "XHTML" || typeStr == "xhtml") {
+        options |= XML_SAVE_XHTML; // force XHTML serialization
+      }
+    }
+  } else if (info.Length() == 0 || info[0].IsUndefined() ||
+             info[0].ToBoolean().Value()) {
+    options |= XML_SAVE_FORMAT;
   }
 
   xmlBuffer *buf = xmlBufferCreate();
   xmlSaveCtxt *savectx = xmlSaveToBuffer(buf, encoding, options);
-  xmlSaveTree(savectx, (xmlNode *)document->xml_obj);
+  xmlSaveTree(savectx, (xmlNode *)xml_obj);
   xmlSaveFlush(savectx);
   xmlSaveClose(savectx);
-  Local<Value> ret = Nan::Null();
+  Napi::Value ret = env.Null();
   if (xmlBufferLength(buf) > 0)
-    ret = Nan::New<String>((char *)xmlBufferContent(buf), xmlBufferLength(buf))
-              .ToLocalChecked();
+    ret = Napi::String::New(env, (char *)xmlBufferContent(buf),
+                            xmlBufferLength(buf));
   xmlBufferFree(buf);
 
-  return info.GetReturnValue().Set(ret);
+  return ret;
 }
 
-NAN_METHOD(XmlDocument::type) {
-  return info.GetReturnValue().Set(
-      Nan::New<String>("document").ToLocalChecked());
+Napi::Value XmlDocument::type(const Napi::CallbackInfo& info) {
+  return Napi::String::New(info.Env(), "document");
 }
 
 // not called from node
-// private api
-Local<Object> XmlDocument::New(xmlDoc *doc) {
-  Nan::EscapableHandleScope scope;
-
+// private api: wraps an existing xmlDoc* in a JS object
+Napi::Object XmlDocument::New(Napi::Env env, xmlDoc *doc) {
   if (doc->_private) {
-    return scope.Escape(static_cast<XmlDocument *>(doc->_private)->handle());
+    return static_cast<XmlDocument *>(doc->_private)->Value();
   }
 
-  Local<Object> obj =
-      Nan::NewInstance(
-          Nan::GetFunction(Nan::New(constructor_template)).ToLocalChecked())
-          .ToLocalChecked();
+  Napi::Object obj = constructor.New({});
 
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(obj);
+  XmlDocument *document = Napi::ObjectWrap<XmlDocument>::Unwrap(obj);
 
-  // replace the document we created
+  // replace the document we created in the constructor
   document->xml_obj->_private = NULL;
   xmlFreeDoc(document->xml_obj);
   document->xml_obj = doc;
 
   // store ourselves in the document
-  // this is how we can get instances or already existing v8 objects
+  // this is how we can get instances of already existing v8 objects
   doc->_private = document;
 
-  return scope.Escape(obj);
+  return obj;
 }
 
-int getParserOption(Local<Object> props, const char *key, int value,
+int getParserOption(Napi::Object props, const char *key, int value,
                     bool defaultValue = true) {
-  Nan::HandleScope scope;
-  Local<Value> prop =
-      Nan::Get(props, Nan::New<String>(key).ToLocalChecked()).ToLocalChecked();
-  return !prop->IsUndefined() && Nan::To<bool>(prop).ToChecked() == defaultValue
+  Napi::Value prop = props.Get(key);
+  return !prop.IsUndefined() && prop.ToBoolean().Value() == defaultValue
              ? value
              : 0;
 }
 
-xmlParserOption getParserOptions(Local<Object> props) {
+xmlParserOption getParserOptions(Napi::Object props) {
   int ret = 0;
 
   // http://xmlsoft.org/html/libxml-parser.html#xmlParserOption
@@ -429,56 +397,52 @@ xmlParserOption getParserOptions(Local<Object> props) {
   return (xmlParserOption)ret;
 }
 
-NAN_METHOD(XmlDocument::FromHtml) {
-  Nan::HandleScope scope;
+Napi::Value XmlDocument::FromHtml(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
-  Local<Object> options = Nan::To<Object>(info[1]).ToLocalChecked();
-  Local<Value> baseUrlOpt =
-      Nan::Get(options, Nan::New<String>("baseUrl").ToLocalChecked())
-          .ToLocalChecked();
-  Local<Value> encodingOpt =
-      Nan::Get(options, Nan::New<String>("encoding").ToLocalChecked())
-          .ToLocalChecked();
-  Local<Value> excludeImpliedElementsOpt =
-      Nan::Get(options,
-               Nan::New<String>("excludeImpliedElements").ToLocalChecked())
-          .ToLocalChecked();
+  Napi::Object options = info[1].As<Napi::Object>();
+  Napi::Value baseUrlOpt = options.Get("baseUrl");
+  Napi::Value encodingOpt = options.Get("encoding");
+  Napi::Value excludeImpliedElementsOpt = options.Get("excludeImpliedElements");
 
   // the base URL that will be used for this HTML parsed document
-  Nan::Utf8String baseUrl_(Nan::To<String>(baseUrlOpt).ToLocalChecked());
-  const char *baseUrl = *baseUrl_;
-  if (!baseUrlOpt->IsString()) {
-    baseUrl = NULL;
+  std::string baseUrlStr;
+  const char *baseUrl = NULL;
+  if (baseUrlOpt.IsString()) {
+    baseUrlStr = baseUrlOpt.As<Napi::String>().Utf8Value();
+    baseUrl = baseUrlStr.c_str();
   }
 
   // the encoding to be used for this document
   // (leave NULL for libxml to autodetect)
-  Nan::Utf8String encoding_(Nan::To<String>(encodingOpt).ToLocalChecked());
-  const char *encoding = *encoding_;
-
-  if (!encodingOpt->IsString()) {
-    encoding = NULL;
+  std::string encodingStr;
+  const char *encoding = NULL;
+  if (encodingOpt.IsString()) {
+    encodingStr = encodingOpt.As<Napi::String>().Utf8Value();
+    encoding = encodingStr.c_str();
   }
 
-  Local<Array> errors = Nan::New<Array>();
+  Napi::Array errors = Napi::Array::New(env);
+  XmlSyntaxErrorContext errCtx = { env, &errors };
+
   xmlResetLastError();
-  xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errors),
+  xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errCtx),
                             XmlSyntaxError::PushToArray);
 
   int opts = (int)getParserOptions(options);
-  if (Nan::To<bool>(excludeImpliedElementsOpt).ToChecked())
+  if (!excludeImpliedElementsOpt.IsUndefined() &&
+      excludeImpliedElementsOpt.ToBoolean().Value())
     opts |= HTML_PARSE_NOIMPLIED | HTML_PARSE_NODEFDTD;
 
   htmlDocPtr doc;
-  if (!node::Buffer::HasInstance(info[0])) {
+  if (!info[0].IsBuffer()) {
     // Parse a string
-    Nan::Utf8String str(Nan::To<String>(info[0]).ToLocalChecked());
-    doc = htmlReadMemory(*str, str.length(), baseUrl, encoding, opts);
+    std::string str = info[0].As<Napi::String>().Utf8Value();
+    doc = htmlReadMemory(str.c_str(), str.length(), baseUrl, encoding, opts);
   } else {
     // Parse a buffer
-    Local<Object> buf = Nan::To<Object>(info[0]).ToLocalChecked();
-    doc = htmlReadMemory(node::Buffer::Data(buf), node::Buffer::Length(buf),
-                         baseUrl, encoding, opts);
+    Napi::Buffer<char> buf = info[0].As<Napi::Buffer<char>>();
+    doc = htmlReadMemory(buf.Data(), buf.Length(), baseUrl, encoding, opts);
   }
 
   xmlSetStructuredErrorFunc(NULL, NULL);
@@ -486,63 +450,65 @@ NAN_METHOD(XmlDocument::FromHtml) {
   if (!doc) {
     xmlError *error = xmlGetLastError();
     if (error) {
-      return Nan::ThrowError(XmlSyntaxError::BuildSyntaxError(error));
+      napi_throw(env, XmlSyntaxError::BuildSyntaxError(env, error));
+      return env.Null();
     }
-    return Nan::ThrowError("Could not parse XML string");
+    Napi::Error::New(env, "Could not parse XML string")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> doc_handle = XmlDocument::New(doc);
-  Nan::Set(doc_handle, Nan::New<String>("errors").ToLocalChecked(), errors);
+  Napi::Object doc_handle = XmlDocument::New(env, doc);
+  doc_handle.Set("errors", errors);
 
   // create the xml document handle to return
-  return info.GetReturnValue().Set(doc_handle);
+  return doc_handle;
 }
 
 // FIXME: this method is almost identical to FromHtml above.
 // The two should be refactored to use a common function for most
 // of the work
-NAN_METHOD(XmlDocument::FromXml) {
-  Nan::HandleScope scope;
+Napi::Value XmlDocument::FromXml(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
-  Local<Array> errors = Nan::New<Array>();
+  Napi::Array errors = Napi::Array::New(env);
+  XmlSyntaxErrorContext errCtx = { env, &errors };
+
   xmlResetLastError();
-  xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errors),
+  xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errCtx),
                             XmlSyntaxError::PushToArray);
 
-  Local<Object> options = Nan::To<Object>(info[1]).ToLocalChecked();
-  Local<Value> baseUrlOpt =
-      Nan::Get(options, Nan::New<String>("baseUrl").ToLocalChecked())
-          .ToLocalChecked();
-  Local<Value> encodingOpt =
-      Nan::Get(options, Nan::New<String>("encoding").ToLocalChecked())
-          .ToLocalChecked();
+  Napi::Object options = info[1].As<Napi::Object>();
+  Napi::Value baseUrlOpt = options.Get("baseUrl");
+  Napi::Value encodingOpt = options.Get("encoding");
 
   // the base URL that will be used for this document
-  Nan::Utf8String baseUrl_(baseUrlOpt);
-  const char *baseUrl = *baseUrl_;
-  if (!baseUrlOpt->IsString()) {
-    baseUrl = NULL;
+  std::string baseUrlStr;
+  const char *baseUrl = NULL;
+  if (baseUrlOpt.IsString()) {
+    baseUrlStr = baseUrlOpt.As<Napi::String>().Utf8Value();
+    baseUrl = baseUrlStr.c_str();
   }
 
   // the encoding to be used for this document
   // (leave NULL for libxml to autodetect)
-  Nan::Utf8String encoding_(encodingOpt);
-  const char *encoding = *encoding_;
-  if (!encodingOpt->IsString()) {
-    encoding = NULL;
+  std::string encodingStr;
+  const char *encoding = NULL;
+  if (encodingOpt.IsString()) {
+    encodingStr = encodingOpt.As<Napi::String>().Utf8Value();
+    encoding = encodingStr.c_str();
   }
 
   int opts = (int)getParserOptions(options);
   xmlDocPtr doc;
-  if (!node::Buffer::HasInstance(info[0])) {
+  if (!info[0].IsBuffer()) {
     // Parse a string
-    Nan::Utf8String str(Nan::To<String>(info[0]).ToLocalChecked());
-    doc = xmlReadMemory(*str, str.length(), baseUrl, "UTF-8", opts);
+    std::string str = info[0].As<Napi::String>().Utf8Value();
+    doc = xmlReadMemory(str.c_str(), str.length(), baseUrl, "UTF-8", opts);
   } else {
     // Parse a buffer
-    Local<Object> buf = Nan::To<Object>(info[0]).ToLocalChecked();
-    doc = xmlReadMemory(node::Buffer::Data(buf), node::Buffer::Length(buf),
-                        baseUrl, encoding, opts);
+    Napi::Buffer<char> buf = info[0].As<Napi::Buffer<char>>();
+    doc = xmlReadMemory(buf.Data(), buf.Length(), baseUrl, encoding, opts);
   }
 
   xmlSetStructuredErrorFunc(NULL, NULL);
@@ -550,13 +516,16 @@ NAN_METHOD(XmlDocument::FromXml) {
   if (!doc) {
     xmlError *error = xmlGetLastError();
     if (error) {
-      return Nan::ThrowError(XmlSyntaxError::BuildSyntaxError(error));
+      napi_throw(env, XmlSyntaxError::BuildSyntaxError(env, error));
+      return env.Null();
     }
-    return Nan::ThrowError("Could not parse XML string");
+    Napi::Error::New(env, "Could not parse XML string")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
   if (opts & XML_PARSE_XINCLUDE) {
-    xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errors),
+    xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errCtx),
                               XmlSyntaxError::PushToArray);
     int ret = xmlXIncludeProcessFlags(doc, opts);
     xmlSetStructuredErrorFunc(NULL, NULL);
@@ -564,207 +533,214 @@ NAN_METHOD(XmlDocument::FromXml) {
     if (ret < 0) {
       xmlError *error = xmlGetLastError();
       if (error) {
-        return Nan::ThrowError(XmlSyntaxError::BuildSyntaxError(error));
+        napi_throw(env, XmlSyntaxError::BuildSyntaxError(env, error));
+        return env.Null();
       }
-      return Nan::ThrowError("Could not perform XInclude substitution");
+      Napi::Error::New(env, "Could not perform XInclude substitution")
+          .ThrowAsJavaScriptException();
+      return env.Null();
     }
   }
 
-  Local<Object> doc_handle = XmlDocument::New(doc);
-  Nan::Set(doc_handle, Nan::New<String>("errors").ToLocalChecked(), errors);
+  Napi::Object doc_handle = XmlDocument::New(env, doc);
+  doc_handle.Set("errors", errors);
 
   xmlNode *root_node = xmlDocGetRootElement(doc);
   if (root_node == NULL) {
-    return Nan::ThrowError("parsed document has no root element");
+    Napi::Error::New(env, "parsed document has no root element")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
   // create the xml document handle to return
-  return info.GetReturnValue().Set(doc_handle);
+  return doc_handle;
 }
 
-NAN_METHOD(XmlDocument::Validate) {
-  if (info.Length() == 0 || info[0]->IsNullOrUndefined()) {
-    Nan::ThrowError("Must pass xsd");
-    return;
+Napi::Value XmlDocument::Validate(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() == 0 || info[0].IsNull() || info[0].IsUndefined()) {
+    Napi::Error::New(env, "Must pass xsd").ThrowAsJavaScriptException();
+    return env.Null();
   }
-  if (!XmlDocument::constructor_template.Get(Isolate::GetCurrent())
-           ->HasInstance(info[0])) {
-    Nan::ThrowError("Must pass XmlDocument");
-    return;
+  if (!info[0].IsObject() ||
+      !info[0].As<Napi::Object>().InstanceOf(constructor.Value())) {
+    Napi::Error::New(env, "Must pass XmlDocument").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Nan::HandleScope scope;
+  Napi::Array errors = Napi::Array::New(env);
+  XmlSyntaxErrorContext errCtx = { env, &errors };
 
-  Local<Array> errors = Nan::New<Array>();
   xmlResetLastError();
-  xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errors),
+  xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errCtx),
                             XmlSyntaxError::PushToArray);
 
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  XmlDocument *documentSchema = Nan::ObjectWrap::Unwrap<XmlDocument>(
-      Nan::To<Object>(info[0]).ToLocalChecked());
+  XmlDocument *documentSchema =
+      Napi::ObjectWrap<XmlDocument>::Unwrap(info[0].As<Napi::Object>());
 
   xmlSchemaParserCtxtPtr parser_ctxt =
       xmlSchemaNewDocParserCtxt(documentSchema->xml_obj);
   if (parser_ctxt == NULL) {
-    return Nan::ThrowError("Could not create context for schema parser");
+    Napi::Error::New(env, "Could not create context for schema parser")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
   xmlSchemaPtr schema = xmlSchemaParse(parser_ctxt);
   if (schema == NULL) {
-    return Nan::ThrowError("Invalid XSD schema");
+    Napi::Error::New(env, "Invalid XSD schema").ThrowAsJavaScriptException();
+    return env.Null();
   }
   xmlSchemaValidCtxtPtr valid_ctxt = xmlSchemaNewValidCtxt(schema);
   if (valid_ctxt == NULL) {
-    return Nan::ThrowError(
-        "Unable to create a validation context for the schema");
+    Napi::Error::New(env, "Unable to create a validation context for the schema")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
-  bool valid = xmlSchemaValidateDoc(valid_ctxt, document->xml_obj) == 0;
+  bool valid = xmlSchemaValidateDoc(valid_ctxt, xml_obj) == 0;
 
   xmlSetStructuredErrorFunc(NULL, NULL);
-  Nan::Set(info.This(), Nan::New<String>("validationErrors").ToLocalChecked(),
-           errors)
-      .Check();
+  Value().Set("validationErrors", errors);
 
   xmlSchemaFreeValidCtxt(valid_ctxt);
   xmlSchemaFree(schema);
   xmlSchemaFreeParserCtxt(parser_ctxt);
 
-  return info.GetReturnValue().Set(Nan::New<Boolean>(valid));
+  return Napi::Boolean::New(env, valid);
 }
 
-NAN_METHOD(XmlDocument::RngValidate) {
-  if (info.Length() == 0 || info[0]->IsNullOrUndefined()) {
-    Nan::ThrowError("Must pass xsd");
-    return;
+Napi::Value XmlDocument::RngValidate(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() == 0 || info[0].IsNull() || info[0].IsUndefined()) {
+    Napi::Error::New(env, "Must pass xsd").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  if (!info[0].IsObject() ||
+      !info[0].As<Napi::Object>().InstanceOf(constructor.Value())) {
+    Napi::Error::New(env, "Must pass XmlDocument").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!XmlDocument::constructor_template.Get(Isolate::GetCurrent())
-           ->HasInstance(info[0])) {
-    Nan::ThrowError("Must pass XmlDocument");
-    return;
-  }
+  Napi::Array errors = Napi::Array::New(env);
+  XmlSyntaxErrorContext errCtx = { env, &errors };
 
-  Nan::HandleScope scope;
-
-  Local<Array> errors = Nan::New<Array>();
   xmlResetLastError();
-  xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errors),
+  xmlSetStructuredErrorFunc(reinterpret_cast<void *>(&errCtx),
                             XmlSyntaxError::PushToArray);
 
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  XmlDocument *documentSchema = Nan::ObjectWrap::Unwrap<XmlDocument>(
-      Nan::To<Object>(info[0]).ToLocalChecked());
+  XmlDocument *documentSchema =
+      Napi::ObjectWrap<XmlDocument>::Unwrap(info[0].As<Napi::Object>());
 
   xmlRelaxNGParserCtxtPtr parser_ctxt =
       xmlRelaxNGNewDocParserCtxt(documentSchema->xml_obj);
   if (parser_ctxt == NULL) {
-    return Nan::ThrowError(
-        "Could not create context for RELAX NG schema parser");
+    Napi::Error::New(env, "Could not create context for RELAX NG schema parser")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
   xmlRelaxNGPtr schema = xmlRelaxNGParse(parser_ctxt);
   if (schema == NULL) {
-    return Nan::ThrowError("Invalid RELAX NG schema");
+    Napi::Error::New(env, "Invalid RELAX NG schema").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
   xmlRelaxNGValidCtxtPtr valid_ctxt = xmlRelaxNGNewValidCtxt(schema);
   if (valid_ctxt == NULL) {
-    return Nan::ThrowError(
-        "Unable to create a validation context for the RELAX NG schema");
+    Napi::Error::New(env,
+                     "Unable to create a validation context for the RELAX NG schema")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
-  bool valid = xmlRelaxNGValidateDoc(valid_ctxt, document->xml_obj) == 0;
+  bool valid = xmlRelaxNGValidateDoc(valid_ctxt, xml_obj) == 0;
 
   xmlSetStructuredErrorFunc(NULL, NULL);
-  Nan::Set(info.This(), Nan::New<String>("validationErrors").ToLocalChecked(),
-           errors)
-      .Check();
+  Value().Set("validationErrors", errors);
 
   xmlRelaxNGFreeValidCtxt(valid_ctxt);
   xmlRelaxNGFree(schema);
   xmlRelaxNGFreeParserCtxt(parser_ctxt);
 
-  return info.GetReturnValue().Set(Nan::New<Boolean>(valid));
+  return Napi::Boolean::New(env, valid);
 }
 
-NAN_METHOD(XmlDocument::SchematronValidate) {
-  if (info.Length() == 0 || info[0]->IsNullOrUndefined()) {
-    Nan::ThrowError("Must pass schema");
-    return;
+Napi::Value XmlDocument::SchematronValidate(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() == 0 || info[0].IsNull() || info[0].IsUndefined()) {
+    Napi::Error::New(env, "Must pass schema").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  if (!info[0].IsObject() ||
+      !info[0].As<Napi::Object>().InstanceOf(constructor.Value())) {
+    Napi::Error::New(env, "Must pass XmlDocument").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!XmlDocument::constructor_template.Get(Isolate::GetCurrent())
-           ->HasInstance(info[0])) {
-    Nan::ThrowError("Must pass XmlDocument");
-    return;
-  }
+  Napi::Array errors = Napi::Array::New(env);
+  XmlSyntaxErrorContext errCtx = { env, &errors };
 
-  Nan::HandleScope scope;
-
-  Local<Array> errors = Nan::New<Array>();
-  xmlResetLastError();
-
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(info.This());
-  XmlDocument *documentSchema = Nan::ObjectWrap::Unwrap<XmlDocument>(
-      Nan::To<Object>(info[0]).ToLocalChecked());
+  XmlDocument *documentSchema =
+      Napi::ObjectWrap<XmlDocument>::Unwrap(info[0].As<Napi::Object>());
 
   xmlSchematronParserCtxtPtr parser_ctxt =
       xmlSchematronNewDocParserCtxt(documentSchema->xml_obj);
   if (parser_ctxt == NULL) {
-    return Nan::ThrowError(
-        "Could not create context for Schematron schema parser");
+    Napi::Error::New(env,
+                     "Could not create context for Schematron schema parser")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
   xmlSchematronPtr schema = xmlSchematronParse(parser_ctxt);
   if (schema == NULL) {
-    return Nan::ThrowError("Invalid Schematron schema");
+    Napi::Error::New(env, "Invalid Schematron schema")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  xmlSchematronValidCtxtPtr valid_ctxt = xmlSchematronNewValidCtxt(schema, XML_SCHEMATRON_OUT_ERROR);
+  xmlSchematronValidCtxtPtr valid_ctxt =
+      xmlSchematronNewValidCtxt(schema, XML_SCHEMATRON_OUT_ERROR);
   if (valid_ctxt == NULL) {
-    return Nan::ThrowError(
-        "Unable to create a validation context for the Schematron schema");
+    Napi::Error::New(env,
+                     "Unable to create a validation context for the Schematron schema")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
-  xmlSchematronSetValidStructuredErrors(valid_ctxt,
-                                        XmlSyntaxError::PushToArray,
-                                        reinterpret_cast<void *>(&errors));
+  xmlSchematronSetValidStructuredErrors(valid_ctxt, XmlSyntaxError::PushToArray,
+                                        reinterpret_cast<void *>(&errCtx));
 
-  bool valid = xmlSchematronValidateDoc(valid_ctxt, document->xml_obj) == 0;
+  bool valid = xmlSchematronValidateDoc(valid_ctxt, xml_obj) == 0;
 
   xmlSchematronSetValidStructuredErrors(valid_ctxt, NULL, NULL);
-  Nan::Set(info.This(), Nan::New<String>("validationErrors").ToLocalChecked(),
-           errors)
-      .Check();
+  Value().Set("validationErrors", errors);
 
   xmlSchematronFreeValidCtxt(valid_ctxt);
   xmlSchematronFree(schema);
   xmlSchematronFreeParserCtxt(parser_ctxt);
 
-  return info.GetReturnValue().Set(Nan::New<Boolean>(valid));
+  return Napi::Boolean::New(env, valid);
 }
 
-/// this is a blank object with prototype methods
-/// not exposed to the user and not called from js
-NAN_METHOD(XmlDocument::New) {
-  NAN_CONSTRUCTOR_CHECK(XmlDocument)
+XmlDocument::XmlDocument(const Napi::CallbackInfo& info)
+    : Napi::ObjectWrap<XmlDocument>(info) {
+  NAPI_CONSTRUCTOR_CHECK(XmlDocument)
 
-  const char *version = info.Length() > 0 && info[0]->IsString()
-                            ? *Nan::Utf8String(info[0])
-                            : "1.0";
-  xmlDoc *doc = xmlNewDoc((const xmlChar *)(version));
+  std::string versionStr =
+      (info.Length() > 0 && info[0].IsString())
+          ? info[0].As<Napi::String>().Utf8Value()
+          : "1.0";
+  xmlDoc *doc = xmlNewDoc((const xmlChar *)versionStr.c_str());
 
-  const char *encoding = info.Length() > 1 && info[1]->IsString()
-                             ? *Nan::Utf8String(info[1])
-                             : "utf8";
+  std::string encodingStr =
+      (info.Length() > 1 && info[1].IsString())
+          ? info[1].As<Napi::String>().Utf8Value()
+          : "utf8";
 
-  XmlDocument *document = new XmlDocument(doc);
-  document->setEncoding(encoding);
-  document->Wrap(info.This());
-
-  return info.GetReturnValue().Set(info.This());
-}
-
-XmlDocument::XmlDocument(xmlDoc *doc) : xml_obj(doc) {
+  xml_obj = doc;
   xml_obj->_private = this;
+  setEncoding(encodingStr.c_str());
 }
 
 XmlDocument::~XmlDocument() {
@@ -772,39 +748,35 @@ XmlDocument::~XmlDocument() {
   xmlFreeDoc(xml_obj);
 }
 
-void XmlDocument::Initialize(Local<Object> target) {
-  Nan::HandleScope scope;
+void XmlDocument::Init(Napi::Env env, Napi::Object exports) {
+  Napi::Function func = DefineClass(env, "Document", {
+    InstanceMethod("root", &XmlDocument::Root),
+    InstanceMethod("version", &XmlDocument::Version),
+    InstanceMethod("encoding", &XmlDocument::Encoding),
+    InstanceMethod("toString", &XmlDocument::ToString),
+    InstanceMethod("validate", &XmlDocument::Validate),
+    InstanceMethod("rngValidate", &XmlDocument::RngValidate),
+    InstanceMethod("schematronValidate", &XmlDocument::SchematronValidate),
+    InstanceMethod("_setDtd", &XmlDocument::SetDtd),
+    InstanceMethod("getDtd", &XmlDocument::GetDtd),
+    InstanceMethod("type", &XmlDocument::type),
+  });
 
-  Local<FunctionTemplate> tmpl = Nan::New<FunctionTemplate>(New);
-  tmpl->SetClassName(Nan::New<String>("Document").ToLocalChecked());
+  constructor = Napi::Persistent(func);
+  constructor.SuppressDestruct();
 
-  constructor_template.Reset(tmpl);
-  tmpl->InstanceTemplate()->SetInternalFieldCount(1);
+  exports.Set("Document", func);
 
-  /// setup internal methods for bindings
-  Nan::SetPrototypeMethod(tmpl, "root", XmlDocument::Root);
+  // Static methods on exports (not on prototype)
+  exports.Set("fromXml", Napi::Function::New(env, XmlDocument::FromXml));
+  exports.Set("fromHtml", Napi::Function::New(env, XmlDocument::FromHtml));
 
-  Nan::SetPrototypeMethod(tmpl, "version", XmlDocument::Version);
-
-  Nan::SetPrototypeMethod(tmpl, "encoding", XmlDocument::Encoding);
-
-  Nan::SetPrototypeMethod(tmpl, "toString", XmlDocument::ToString);
-
-  Nan::SetPrototypeMethod(tmpl, "validate", XmlDocument::Validate);
-  Nan::SetPrototypeMethod(tmpl, "rngValidate", XmlDocument::RngValidate);
-  Nan::SetPrototypeMethod(tmpl, "schematronValidate", XmlDocument::SchematronValidate);
-  Nan::SetPrototypeMethod(tmpl, "_setDtd", XmlDocument::SetDtd);
-  Nan::SetPrototypeMethod(tmpl, "getDtd", XmlDocument::GetDtd);
-  Nan::SetPrototypeMethod(tmpl, "type", XmlDocument::type);
-
-  Nan::SetMethod(target, "fromXml", XmlDocument::FromXml);
-  Nan::SetMethod(target, "fromHtml", XmlDocument::FromHtml);
-
-  // used to create new document handles
-  Nan::Set(target, Nan::New<String>("Document").ToLocalChecked(),
-           Nan::GetFunction(tmpl).ToLocalChecked());
-
-  XmlNode::Initialize(target);
-  XmlNamespace::Initialize(target);
+  XmlNamespace::Init(env, exports);
+  XmlAttribute::Init(env, exports);
+  XmlElement::Init(env, exports);
+  XmlText::Init(env, exports);
+  XmlComment::Init(env, exports);
+  XmlProcessingInstruction::Init(env, exports);
 }
+
 } // namespace libxmljs

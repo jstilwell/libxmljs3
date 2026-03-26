@@ -5,7 +5,7 @@ describe('text', () => {
     const doc = new libxml.Document();
 
     expect(() => libxml.Text(doc, '')).toThrow(
-      "Class constructor Text cannot be invoked without 'new'"
+      "cannot be invoked without 'new'"
     );
     expect(() => new libxml.Text(undefined, '')).toThrow(
       'document argument required'
@@ -78,7 +78,7 @@ describe('text', () => {
   });
 
   it('addChildEscaping', () => {
-    const doc = libxml.parseXmlString('<p></p>');
+    const doc = libxml.parseXml('<p></p>');
 
     doc.root().addChild(new libxml.Text(doc, 'x&x'));
 

@@ -1,117 +1,127 @@
-#include <node.h>
+// Copyright 2009, Squish Tech, LLC.
+#include <cassert>
+#include <string>
 
-#include <cstring>
-
-#include "libxmljs.h"
-
-#include "xml_attribute.h"
 #include "xml_comment.h"
 #include "xml_document.h"
-#include "xml_xpath_context.h"
-
-using namespace v8;
 
 namespace libxmljs {
 
-Nan::Persistent<FunctionTemplate> XmlComment::constructor_template;
+Napi::FunctionReference XmlComment::constructor;
 
-// doc, content
-NAN_METHOD(XmlComment::New) {
-  NAN_CONSTRUCTOR_CHECK(Comment)
-  Nan::HandleScope scope;
+XmlComment::XmlComment(const Napi::CallbackInfo& info)
+    : Napi::ObjectWrap<XmlComment>(info), XmlNode(nullptr) {
+  // Zero-argument form: called from C++ factory. Caller sets xml_obj directly.
+  if (info.Length() == 0) return;
 
-  // if we were created for an existing xml node, then we don't need
-  // to create a new node on the document
-  if (info.Length() == 0) {
-    return info.GetReturnValue().Set(info.This());
+  Napi::Env env = info.Env();
+
+  // doc, content
+  if (info.Length() < 1 || info[0].IsNull() || info[0].IsUndefined()) {
+    Napi::Error::New(env, "document argument required")
+        .ThrowAsJavaScriptException();
+    return;
   }
 
-  DOCUMENT_ARG_CHECK
+  if (!info[0].As<Napi::Object>().InstanceOf(XmlDocument::constructor.Value())) {
+    Napi::Error::New(env, "document argument must be an instance of Document")
+        .ThrowAsJavaScriptException();
+    return;
+  }
 
-  XmlDocument *document = Nan::ObjectWrap::Unwrap<XmlDocument>(doc);
+  XmlDocument *document = XmlDocument::Unwrap(info[0].As<Napi::Object>());
   assert(document);
 
-  Local<Value> contentOpt;
-  if (info[1]->IsString()) {
-    contentOpt = info[1];
+  const char *content = nullptr;
+  std::string content_buf;
+  if (info.Length() > 1 && info[1].IsString()) {
+    content_buf = info[1].As<Napi::String>().Utf8Value();
+    content = content_buf.c_str();
   }
-  Nan::Utf8String contentRaw(contentOpt);
-  const char *content = (contentRaw.length()) ? *contentRaw : NULL;
 
-  xmlNode *comm = xmlNewDocComment(document->xml_obj, (xmlChar *)content);
+  xmlNode *comm = xmlNewDocComment(document->xml_obj, (const xmlChar *)content);
+  this->xml_obj = comm;
+  comm->_private = static_cast<XmlNode *>(this);
+  this->ancestor = nullptr;
+  if (comm->doc && comm->doc->_private) {
+    this->doc = comm->doc;
+    static_cast<XmlDocument *>(comm->doc->_private)->Ref();
+  }
+  this->ref_wrapped_ancestor();
+  this->attach(info.This().As<Napi::Object>());
 
-  XmlComment *comment = new XmlComment(comm);
-  comm->_private = comment;
-  comment->Wrap(info.This());
-
-  // this prevents the document from going away
-  Nan::Set(info.This(), Nan::New<String>("document").ToLocalChecked(),
-           info[0])
-      .Check();
-
-  return info.GetReturnValue().Set(info.This());
+  // Keep a reference to the document JS object to prevent GC
+  info.This().As<Napi::Object>().Set("document", info[0]);
 }
 
-NAN_METHOD(XmlComment::Text) {
-  Nan::HandleScope scope;
-  XmlComment *comment = Nan::ObjectWrap::Unwrap<XmlComment>(info.This());
-  assert(comment);
-
-  if (info.Length() == 0) {
-    return info.GetReturnValue().Set(comment->get_content());
-  } else {
-    comment->set_content(*Nan::Utf8String(info[0]));
+// static
+Napi::Object XmlComment::New(Napi::Env env, xmlNode *node) {
+  if (node->_private) {
+    return static_cast<XmlNode *>(node->_private)->Value_();
   }
 
-  return info.GetReturnValue().Set(info.This());
+  Napi::Object obj = constructor.New({});
+  XmlComment *wrapper = Napi::ObjectWrap<XmlComment>::Unwrap(obj);
+  wrapper->xml_obj = node;
+  node->_private = static_cast<XmlNode *>(wrapper);
+  wrapper->ancestor = nullptr;
+  if (node->doc && node->doc->_private) {
+    wrapper->doc = node->doc;
+    static_cast<XmlDocument *>(node->doc->_private)->Ref();
+  }
+  wrapper->ref_wrapped_ancestor();
+  wrapper->attach(obj);
+  return obj;
+}
+
+Napi::Value XmlComment::Text(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() == 0) {
+    return get_content(env);
+  }
+
+  std::string content = info[0].As<Napi::String>().Utf8Value();
+  set_content(content.c_str());
+  return Value_();
 }
 
 void XmlComment::set_content(const char *content) {
-  xmlNodeSetContent(xml_obj, (xmlChar *)content);
+  xmlNodeSetContent(xml_obj, (const xmlChar *)content);
 }
 
-Local<Value> XmlComment::get_content() {
-  Nan::EscapableHandleScope scope;
+Napi::Value XmlComment::get_content(Napi::Env env) {
   xmlChar *content = xmlNodeGetContent(xml_obj);
   if (content) {
-    Local<String> ret_content =
-        Nan::New<String>((const char *)content).ToLocalChecked();
+    Napi::String ret = Napi::String::New(env, reinterpret_cast<const char *>(content));
     xmlFree(content);
-    return scope.Escape(ret_content);
+    return ret;
   }
-
-  return scope.Escape(Nan::New<String>("").ToLocalChecked());
+  return Napi::String::New(env, "");
 }
 
-Local<Object> XmlComment::New(xmlNode *node) {
-  Nan::EscapableHandleScope scope;
-  if (node->_private) {
-    return scope.Escape(static_cast<XmlNode *>(node->_private)->handle());
-  }
+// static
+void XmlComment::Init(Napi::Env env, Napi::Object exports) {
+  Napi::Function func = DefineClass(env, "Comment", {
+    // XmlNode base methods
+    InstanceMethod("doc",         &XmlComment::Doc),
+    InstanceMethod("parent",      &XmlComment::Parent),
+    InstanceMethod("namespace",   &XmlComment::Namespace),
+    InstanceMethod("namespaces",  &XmlComment::Namespaces),
+    InstanceMethod("prevSibling", &XmlComment::PrevSibling),
+    InstanceMethod("nextSibling", &XmlComment::NextSibling),
+    InstanceMethod("line",        &XmlComment::LineNumber),
+    InstanceMethod("type",        &XmlComment::Type),
+    InstanceMethod("remove",      &XmlComment::Remove),
+    InstanceMethod("clone",       &XmlComment::Clone),
+    InstanceMethod("toString",    &XmlComment::ToString),
+    // Own methods
+    InstanceMethod("text", &XmlComment::Text),
+  });
 
-  XmlComment *comment = new XmlComment(node);
-  Local<Object> obj =
-      Nan::NewInstance(
-          Nan::GetFunction(Nan::New(constructor_template)).ToLocalChecked())
-          .ToLocalChecked();
-  comment->Wrap(obj);
-  return scope.Escape(obj);
-}
-
-XmlComment::XmlComment(xmlNode *node) : XmlNode(node) {}
-
-void XmlComment::Initialize(Local<Object> target) {
-  Nan::HandleScope scope;
-  Local<FunctionTemplate> t =
-      Nan::New<FunctionTemplate>(static_cast<NAN_METHOD((*))>(New));
-  t->Inherit(Nan::New(XmlNode::constructor_template));
-  t->InstanceTemplate()->SetInternalFieldCount(1);
-  constructor_template.Reset(t);
-
-  Nan::SetPrototypeMethod(t, "text", XmlComment::Text);
-
-  Nan::Set(target, Nan::New<String>("Comment").ToLocalChecked(),
-           Nan::GetFunction(t).ToLocalChecked());
+  constructor = Napi::Persistent(func);
+  constructor.SuppressDestruct();
+  exports.Set("Comment", func);
 }
 
 } // namespace libxmljs

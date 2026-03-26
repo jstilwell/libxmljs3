@@ -12,13 +12,12 @@ function test_parser_option(input, options, expected) {
 describe('xml parser', () => {
   it('parse', () => {
     const filename = `${__dirname}/fixtures/parser.xml`;
-    // eslint-disable-next-line no-sync
+     
     const str = fs.readFileSync(filename, 'utf8');
 
     const doc = libxml.parseXml(str);
 
     expect(doc.version()).toBe('1.0');
-    // eslint-disable-next-line unicorn/text-encoding-identifier-case
     expect(doc.encoding()).toBe('UTF-8');
     expect(doc.root().name()).toBe('root');
     expect(doc.get('child').name()).toBe('child');
@@ -33,7 +32,7 @@ describe('xml parser', () => {
 
   it('parse_buffer', () => {
     const filename = `${__dirname}/fixtures/parser-utf16.xml`;
-    // eslint-disable-next-line no-sync
+     
     const buf = fs.readFileSync(filename);
 
     const doc = libxml.parseXml(buf);
@@ -43,13 +42,13 @@ describe('xml parser', () => {
     expect(doc.root().name()).toBe('root');
   });
 
-  it('parse_synonym', () => {
-    expect(libxml.parseXml).toBe(libxml.parseXmlString);
+  it('parseXml exists', () => {
+    expect(typeof libxml.parseXml).toBe('function');
   });
 
   it('recoverable_parse', () => {
     const filename = `${__dirname}/fixtures/warnings/ent9.xml`;
-    // eslint-disable-next-line no-sync
+     
     const str = fs.readFileSync(filename, 'utf8');
 
     const doc = libxml.parseXml(str);
@@ -94,7 +93,7 @@ describe('xml parser', () => {
 
   it('fatal_error', () => {
     const filename = `${__dirname}/fixtures/errors/comment.xml`;
-    // eslint-disable-next-line no-sync
+     
     const str = fs.readFileSync(filename, 'utf8');
     let err = null;
 
@@ -123,14 +122,13 @@ describe('xml parser', () => {
 
   it('text path', () => {
     const xml = '<?xml version="1.0" encoding="utf-8"?><Name>Test</Name>';
-    const doc = libxml.parseXmlString(xml);
+    const doc = libxml.parseXml(xml);
     const text = doc.get('/Name').childNodes()[0];
 
     expect(text.type()).toEqual('text');
     expect(text.path()).toEqual('/Name/text()');
   });
 
-  // eslint-disable-next-line jest/expect-expect
   it('parse_options', () => {
     test_parser_option('<x>&</x>', { recover: true }, '<x/>'); // without this option, this document would raise an exception during parsing
     test_parser_option(

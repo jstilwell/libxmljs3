@@ -77,18 +77,17 @@ describe('ref integrity', () => {
     expect(children[0].attrs()).toBeTruthy();
   });
 
-  // eslint-disable-next-line jest/expect-expect
   it('freed_namespace_unwrappable', () => {
     const doc = libxml.parseXml(
       "<?xml version='1.0' encoding='UTF-8'?><root></root>"
     );
     let el = new libxml.Element(doc, 'foo');
-    // eslint-disable-next-line no-unused-vars
-    let ns = el.namespace('bar', null);
+     
+    let _ns = el.namespace('bar', null);
 
     el = null;
     global.gc();
-    ns = null;
+    _ns = null;
     global.gc();
   });
 

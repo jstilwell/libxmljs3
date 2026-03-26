@@ -151,7 +151,7 @@ describe('namespace', () => {
   it('xmlns', () => {
     const str =
       '<html xmlns="http://www.w3.org/1999/xhtml"><head></head><body><div>BACON</div><div>ROCKS</div><p>WUT?</p></body></html>';
-    const doc = libxml.parseXmlString(str);
+    const doc = libxml.parseXml(str);
 
     const divs = doc.find('//xmlns:div', 'http://www.w3.org/1999/xhtml');
 
@@ -169,7 +169,7 @@ describe('namespace', () => {
   it('custom ns', () => {
     const str =
       '<html xmlns:bacon="http://www.example.com/fake/uri"><head></head><body><bacon:div>BACON</bacon:div><bacon:div>ROCKS</bacon:div><p>WUT?</p></body></html>';
-    const doc = libxml.parseXmlString(str);
+    const doc = libxml.parseXml(str);
 
     const divs = doc.find('//bacon:div', {
       bacon: 'http://www.example.com/fake/uri',
@@ -191,7 +191,7 @@ describe('namespace', () => {
   it('local namespace', () => {
     const str =
       '<html xmlns="urn:example" xmlns:ex1="urn:example:1"><body xmlns:ex2="urn:example:2"/></html>';
-    const doc = libxml.parseXmlString(str);
+    const doc = libxml.parseXml(str);
 
     expect(doc).toBeTruthy();
     const root = doc.root();

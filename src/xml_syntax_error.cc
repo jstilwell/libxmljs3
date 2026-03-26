@@ -4,34 +4,27 @@
 
 #include "xml_syntax_error.h"
 
-using namespace v8;
 namespace {
 
-void set_string_field(Local<Object> obj, const char *name, const char *value) {
-  Nan::HandleScope scope;
+void set_string_field(Napi::Object obj, const char *name, const char *value) {
   if (!value) {
     return;
   }
-  Nan::Set(obj, Nan::New<String>(name).ToLocalChecked(),
-           Nan::New<String>(value, strlen(value)).ToLocalChecked());
+  obj.Set(name, Napi::String::New(obj.Env(), value));
 }
 
-void set_numeric_field(Local<Object> obj, const char *name, const int value) {
-  Nan::HandleScope scope;
-  Nan::Set(obj, Nan::New<String>(name).ToLocalChecked(),
-           Nan::New<Int32>(value));
+void set_numeric_field(Napi::Object obj, const char *name, const int value) {
+  obj.Set(name, Napi::Number::New(obj.Env(), value));
 }
 
 } // anonymous namespace
 
 namespace libxmljs {
 
-Local<Value> XmlSyntaxError::BuildSyntaxError(xmlError *error) {
-  Nan::EscapableHandleScope scope;
-
-  Local<Value> err =
-      Exception::Error(Nan::New<String>(error->message).ToLocalChecked());
-  Local<Object> out = Local<Object>::Cast(err);
+Napi::Value XmlSyntaxError::BuildSyntaxError(Napi::Env env, xmlError *error) {
+  Napi::Value err =
+      Napi::Error::New(env, error->message ? error->message : "").Value();
+  Napi::Object out = err.As<Napi::Object>();
 
   set_numeric_field(out, "domain", error->domain);
   set_numeric_field(out, "code", error->code);
@@ -48,19 +41,18 @@ Local<Value> XmlSyntaxError::BuildSyntaxError(xmlError *error) {
   if (error->int1) {
     set_numeric_field(out, "int1", error->int1);
   }
-  return scope.Escape(err);
+
+  return err;
 }
 
-void XmlSyntaxError::PushToArray(void *errs, xmlError *error) {
-  Nan::HandleScope scope;
-  Local<Array> errors = *reinterpret_cast<Local<Array> *>(errs);
-  // push method for array
-  Local<Function> push = Local<Function>::Cast(
-      Nan::Get(errors, Nan::New<String>("push").ToLocalChecked())
-          .ToLocalChecked());
+void XmlSyntaxError::PushToArray(void *context, xmlError *error) {
+  XmlSyntaxErrorContext *ctx = reinterpret_cast<XmlSyntaxErrorContext *>(context);
+  Napi::Env env = ctx->env;
+  Napi::Array errors = *(ctx->errors);
 
-  Local<Value> argv[1] = {XmlSyntaxError::BuildSyntaxError(error)};
-  Nan::Call(push, errors, 1, argv);
+  Napi::Value pushVal = errors.Get("push");
+  Napi::Function push = pushVal.As<Napi::Function>();
+  push.Call(errors, {XmlSyntaxError::BuildSyntaxError(env, error)});
 }
 
 } // namespace libxmljs

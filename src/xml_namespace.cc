@@ -1,158 +1,161 @@
 // Copyright 2009, Squish Tech, LLC.
 
-#include <node.h>
+#include <string>
 
 #include "xml_document.h"
 #include "xml_namespace.h"
 #include "xml_node.h"
 
-using namespace v8;
-
 namespace libxmljs {
 
-Nan::Persistent<FunctionTemplate> XmlNamespace::constructor_template;
+Napi::FunctionReference XmlNamespace::constructor;
 
-NAN_METHOD(XmlNamespace::New) {
-  Nan::HandleScope scope;
-
-  // created for an already existing namespace
+// JS constructor: new Namespace(node, prefix, href)
+// Also invoked with zero arguments from the C++ factory path (XmlNamespace::New)
+// followed immediately by initFromNative().
+XmlNamespace::XmlNamespace(const Napi::CallbackInfo& info)
+    : Napi::ObjectWrap<XmlNamespace>(info), xml_obj(nullptr), context(nullptr) {
+  // Zero-argument form: C++ factory path — caller will call initFromNative().
   if (info.Length() == 0) {
-    return info.GetReturnValue().Set(info.This());
+    return;
   }
 
-  // TODO(sprsquish): ensure this is an actual Node object
-  if (!info[0]->IsObject())
-    return Nan::ThrowError(
-        "You must provide a node to attach this namespace to");
+  Napi::Env env = info.Env();
 
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(
-      Nan::To<Object>(info[0]).ToLocalChecked());
-
-  Nan::Utf8String *prefix = 0;
-  Nan::Utf8String *href = 0;
-
-  if (info[1]->IsString()) {
-    prefix = new Nan::Utf8String(info[1]);
+  if (!info[0].IsObject()) {
+    Napi::Error::New(env, "You must provide a node to attach this namespace to")
+        .ThrowAsJavaScriptException();
+    return;
   }
 
-  href = new Nan::Utf8String(info[2]);
-
-  xmlNs *ns = xmlNewNs(node->xml_obj, (const xmlChar *)(href->operator*()),
-                       prefix ? (const xmlChar *)(prefix->operator*()) : NULL);
-
-  delete prefix;
-  delete href;
-
-  XmlNamespace *namesp = new XmlNamespace(ns);
-  namesp->Wrap(info.This());
-
-  return info.GetReturnValue().Set(info.This());
-}
-
-Local<Object> XmlNamespace::New(xmlNs *node) {
-  Nan::EscapableHandleScope scope;
-  if (node->_private) {
-    return scope.Escape(static_cast<XmlNamespace *>(node->_private)->handle());
+  // Unwrap the XmlNode* from the JS node object.
+  // XmlNode::Unwrap reads xml_obj->_private (set by XmlNode::XmlNode())
+  // without requiring knowledge of the concrete subclass type.
+  Napi::Object node_obj = info[0].As<Napi::Object>();
+  XmlNode *node = XmlNode::Unwrap(env, node_obj);
+  if (!node) {
+    Napi::Error::New(env, "You must provide a valid node object")
+        .ThrowAsJavaScriptException();
+    return;
   }
 
-  XmlNamespace *ns = new XmlNamespace(node);
-  Local<Object> obj =
-      Nan::NewInstance(
-          Nan::GetFunction(Nan::New(constructor_template)).ToLocalChecked())
-          .ToLocalChecked();
-  ns->Wrap(obj);
-  return scope.Escape(obj);
-}
+  const char *prefix_str = nullptr;
+  const char *href_str = nullptr;
 
-XmlNamespace::XmlNamespace(xmlNs *node) : xml_obj(node) {
-  xml_obj->_private = this;
+  std::string prefix_buf, href_buf;
 
-  /*
-   * If a context is present and wrapped, increment its refcount to ensure
-   * that it is considered accessible from javascript for as long as the
-   * namespace is accessible.
-   */
-  if ((xml_obj->context) && (xml_obj->context->_private != NULL)) {
-    this->context = xml_obj->context;
-    // a namespace must be created on a given node
-    XmlDocument *doc = static_cast<XmlDocument *>(xml_obj->context->_private);
-    doc->Ref();
-  } else {
-    this->context = NULL;
+  if (info.Length() > 1 && info[1].IsString()) {
+    prefix_buf = info[1].As<Napi::String>().Utf8Value();
+    prefix_str = prefix_buf.c_str();
   }
+
+  if (info.Length() > 2 && info[2].IsString()) {
+    href_buf = info[2].As<Napi::String>().Utf8Value();
+    href_str = href_buf.c_str();
+  }
+
+  if (!href_str) {
+    Napi::Error::New(env, "You must provide an href for the namespace")
+        .ThrowAsJavaScriptException();
+    return;
+  }
+
+  xmlNs *ns = xmlNewNs(node->xml_obj,
+                       reinterpret_cast<const xmlChar *>(href_str),
+                       prefix_str
+                           ? reinterpret_cast<const xmlChar *>(prefix_str)
+                           : nullptr);
+
+  initFromNative(ns);
 }
 
 XmlNamespace::~XmlNamespace() {
-  /*
-   * `xml_obj` may have been nulled by `xmlDeregisterNodeCallback` when
-   * the `xmlNs` was freed along with an attached node or document.
-   */
-  if (xml_obj != NULL) {
-    xml_obj->_private = NULL;
+  // xml_obj may have been nulled by xmlDeregisterNodeCallback when the xmlNs
+  // was freed along with its attached node or document.
+  if (xml_obj != nullptr) {
+    xml_obj->_private = nullptr;
   }
 
-  /*
-   * The context pointer is only set if this wrapper has incremented the
-   * refcount of the context wrapper.
-   */
-  if (this->context != NULL) {
-    if (this->context->_private != NULL) {
-      // release the hold and allow the document to be freed
+  // The context pointer is only set if this wrapper incremented the refcount.
+  if (this->context != nullptr) {
+    if (this->context->_private != nullptr) {
       XmlDocument *doc = static_cast<XmlDocument *>(this->context->_private);
       doc->Unref();
     }
-    this->context = NULL;
+    this->context = nullptr;
   }
 
-  // We do not free the xmlNode here. It could still be part of a document
-  // It will be freed when the doc is freed
+  // We do not free the xmlNs here — it may still be part of a document and
+  // will be freed when the document is freed.
 }
 
-NAN_METHOD(XmlNamespace::Href) {
-  Nan::HandleScope scope;
-  XmlNamespace *ns = Nan::ObjectWrap::Unwrap<XmlNamespace>(info.This());
-  assert(ns);
-  return info.GetReturnValue().Set(ns->get_href());
+void XmlNamespace::initFromNative(xmlNs *ns) {
+  xml_obj = ns;
+  xml_obj->_private = this;
+
+  // If a context document is present and wrapped, increment its refcount so
+  // that it stays alive for as long as this namespace wrapper is alive.
+  if ((xml_obj->context != nullptr) && (xml_obj->context->_private != nullptr)) {
+    this->context = xml_obj->context;
+    XmlDocument *doc = static_cast<XmlDocument *>(xml_obj->context->_private);
+    doc->Ref();
+  } else {
+    this->context = nullptr;
+  }
 }
 
-NAN_METHOD(XmlNamespace::Prefix) {
-  Nan::HandleScope scope;
-  XmlNamespace *ns = Nan::ObjectWrap::Unwrap<XmlNamespace>(info.This());
-  assert(ns);
-  return info.GetReturnValue().Set(ns->get_prefix());
+// static
+Napi::Object XmlNamespace::New(Napi::Env env, xmlNs *ns) {
+  if (ns->_private) {
+    // Already has a JS wrapper — return it directly.
+    return static_cast<XmlNamespace *>(ns->_private)->Value();
+  }
+
+  // Create a new JS wrapper via the zero-argument constructor, then attach
+  // the native pointer.
+  Napi::Object obj = constructor.New({});
+  XmlNamespace *wrapper = XmlNamespace::Unwrap(obj);
+  wrapper->initFromNative(ns);
+  return obj;
 }
 
-Local<Value> XmlNamespace::get_href() {
-  Nan::EscapableHandleScope scope;
-  if (xml_obj->href)
-    return scope.Escape(
-        Nan::New<String>((const char *)xml_obj->href, xmlStrlen(xml_obj->href))
-            .ToLocalChecked());
-
-  return scope.Escape(Nan::Null());
+Napi::Value XmlNamespace::Href(const Napi::CallbackInfo& info) {
+  return get_href(info.Env());
 }
 
-Local<Value> XmlNamespace::get_prefix() {
-  Nan::EscapableHandleScope scope;
-  if (xml_obj->prefix)
-    return scope.Escape(Nan::New<String>((const char *)xml_obj->prefix,
-                                         xmlStrlen(xml_obj->prefix))
-                            .ToLocalChecked());
-
-  return scope.Escape(Nan::Null());
+Napi::Value XmlNamespace::Prefix(const Napi::CallbackInfo& info) {
+  return get_prefix(info.Env());
 }
 
-void XmlNamespace::Initialize(Local<Object> target) {
-  Nan::HandleScope scope;
-  Local<FunctionTemplate> tmpl = Nan::New<FunctionTemplate>(New);
-  constructor_template.Reset(tmpl);
-  tmpl->InstanceTemplate()->SetInternalFieldCount(1);
-
-  Nan::SetPrototypeMethod(tmpl, "href", XmlNamespace::Href);
-
-  Nan::SetPrototypeMethod(tmpl, "prefix", XmlNamespace::Prefix);
-
-  Nan::Set(target, Nan::New<String>("Namespace").ToLocalChecked(),
-           Nan::GetFunction(tmpl).ToLocalChecked());
+Napi::Value XmlNamespace::get_href(Napi::Env env) {
+  if (xml_obj->href) {
+    return Napi::String::New(env,
+        reinterpret_cast<const char *>(xml_obj->href),
+        xmlStrlen(xml_obj->href));
+  }
+  return env.Null();
 }
+
+Napi::Value XmlNamespace::get_prefix(Napi::Env env) {
+  if (xml_obj->prefix) {
+    return Napi::String::New(env,
+        reinterpret_cast<const char *>(xml_obj->prefix),
+        xmlStrlen(xml_obj->prefix));
+  }
+  return env.Null();
+}
+
+// static
+void XmlNamespace::Init(Napi::Env env, Napi::Object exports) {
+  Napi::Function func = DefineClass(env, "Namespace", {
+    InstanceMethod("href",   &XmlNamespace::Href),
+    InstanceMethod("prefix", &XmlNamespace::Prefix),
+  });
+
+  constructor = Napi::Persistent(func);
+  constructor.SuppressDestruct();
+
+  exports.Set("Namespace", func);
+}
+
 } // namespace libxmljs

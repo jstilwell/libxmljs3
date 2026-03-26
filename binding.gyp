@@ -4,11 +4,11 @@
             "target_name": "xmljs",
             "product_extension": "node",
             "type": "shared_library",
-            "include_dirs": ["vendor/libxml/include", "<!(node -e \"require('nan')\")"],
+            "include_dirs": ["vendor/libxml/include", "<!@(node -p \"require('node-addon-api').include_dir\")"],
             "cflags": ["-Wall"],
             "xcode_settings": {"OTHER_CFLAGS": ["-Wall"]},
             "win_delay_load_hook": "true",
-            "defines": ["LIBXML_XINCLUDE_ENABLED", "LIBXML_SCHEMATRON_ENABLED", "BUILDING_NODE_EXTENSION"],
+            "defines": ["LIBXML_XINCLUDE_ENABLED", "LIBXML_SCHEMATRON_ENABLED", "BUILDING_NODE_EXTENSION", "NAPI_DISABLE_CPP_EXCEPTIONS"],
             "sources": [
                 "src/libxmljs.cc",
                 "src/xml_attribute.cc",

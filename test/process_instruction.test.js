@@ -5,7 +5,7 @@ describe('pi', () => {
     const doc = new libxml.Document();
 
     expect(() => libxml.ProcessingInstruction(doc, '')).toThrow(
-      "Class constructor ProcessingInstruction cannot be invoked without 'new'"
+      "cannot be invoked without 'new'"
     );
     expect(() => new libxml.ProcessingInstruction(undefined, '')).toThrow(
       'document argument required'

@@ -6,8 +6,6 @@
 #include "xml_element.h"
 #include "xml_xpath_context.h"
 
-using namespace v8;
-
 namespace libxmljs {
 
 XmlXpathContext::XmlXpathContext(xmlNode *node) {
@@ -21,22 +19,22 @@ void XmlXpathContext::register_ns(const xmlChar *prefix, const xmlChar *uri) {
   xmlXPathRegisterNs(ctxt, prefix, uri);
 }
 
-Local<Value> XmlXpathContext::evaluate(const xmlChar *xpath) {
-  Nan::EscapableHandleScope scope;
+Napi::Value XmlXpathContext::evaluate(Napi::Env env, const xmlChar *xpath) {
   xmlXPathObject *xpathobj = xmlXPathEval(xpath, ctxt);
-  Local<Value> res;
+  Napi::Value res = env.Null();
 
   if (xpathobj) {
     switch (xpathobj->type) {
     case XPATH_NODESET: {
       if (xmlXPathNodeSetIsEmpty(xpathobj->nodesetval)) {
-        res = Nan::New<Array>(0);
+        res = Napi::Array::New(env, 0);
         break;
       }
 
-      Local<Array> nodes = Nan::New<Array>(xpathobj->nodesetval->nodeNr);
+      Napi::Array nodes =
+          Napi::Array::New(env, xpathobj->nodesetval->nodeNr);
       for (int i = 0; i != xpathobj->nodesetval->nodeNr; ++i) {
-        Nan::Set(nodes, i, XmlNode::New(xpathobj->nodesetval->nodeTab[i]));
+        nodes.Set(i, XmlNode::New(env, xpathobj->nodesetval->nodeTab[i]));
       }
 
       res = nodes;
@@ -44,27 +42,27 @@ Local<Value> XmlXpathContext::evaluate(const xmlChar *xpath) {
     }
 
     case XPATH_BOOLEAN:
-      res = Nan::New<Boolean>(xpathobj->boolval);
+      res = Napi::Boolean::New(env, xpathobj->boolval);
       break;
 
     case XPATH_NUMBER:
-      res = Nan::New<Number>(xpathobj->floatval);
+      res = Napi::Number::New(env, xpathobj->floatval);
       break;
 
     case XPATH_STRING:
-      res = Nan::New<String>((const char *)xpathobj->stringval,
-                             xmlStrlen(xpathobj->stringval))
-                .ToLocalChecked();
+      res = Napi::String::New(env,
+                              reinterpret_cast<const char *>(xpathobj->stringval),
+                              xmlStrlen(xpathobj->stringval));
       break;
 
     default:
-      res = Nan::Null();
+      res = env.Null();
       break;
     }
   }
 
   xmlXPathFreeObject(xpathobj);
-  return scope.Escape(res);
+  return res;
 }
 
 } // namespace libxmljs

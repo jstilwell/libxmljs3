@@ -3,313 +3,281 @@
 #include "xml_textwriter.h"
 #include "libxmljs.h"
 
-using namespace v8;
 namespace libxmljs {
 
+// Throws a JS error and returns env.Null() when the xmlTextWriter call
+// returned -1.  Relies on `env` and `result` being in scope.
 #define THROW_ON_ERROR(text)                                                   \
   if (result == -1) {                                                          \
-    Nan::ThrowError(text);                                                     \
-    return;                                                                    \
+    Napi::Error::New(env, text).ThrowAsJavaScriptException();                  \
+    return env.Null();                                                         \
   }
 
-XmlTextWriter::XmlTextWriter() {
-  textWriter = NULL;
-  writerBuffer = NULL;
+Napi::FunctionReference XmlTextWriter::constructor;
+
+XmlTextWriter::XmlTextWriter(const Napi::CallbackInfo &info)
+    : Napi::ObjectWrap<XmlTextWriter>(info),
+      textWriter(nullptr),
+      writerBuffer(nullptr) {
+  // Open an in-memory buffer immediately on construction.
+  OpenMemory(info);
 }
 
 XmlTextWriter::~XmlTextWriter() {
   if (textWriter) {
     xmlFreeTextWriter(textWriter);
+    textWriter = nullptr;
   }
   if (writerBuffer) {
     xmlBufferFree(writerBuffer);
+    writerBuffer = nullptr;
   }
 }
 
-NAN_METHOD(XmlTextWriter::NewTextWriter) {
-  Nan::HandleScope scope;
-  XmlTextWriter *writer = new XmlTextWriter();
-  writer->Wrap(info.This());
-  writer->OpenMemory(info);
+Napi::Value XmlTextWriter::OpenMemory(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  return info.GetReturnValue().Set(info.This());
-}
-
-NAN_METHOD(XmlTextWriter::OpenMemory) {
-  Nan::HandleScope scope;
-
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  writer->writerBuffer = xmlBufferCreate();
-  if (!writer->writerBuffer) {
-    return Nan::ThrowError("Failed to create memory buffer");
+  writerBuffer = xmlBufferCreate();
+  if (!writerBuffer) {
+    Napi::Error::New(env, "Failed to create memory buffer")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  writer->textWriter = xmlNewTextWriterMemory(writer->writerBuffer, 0);
-  if (!writer->textWriter) {
-    xmlBufferFree(writer->writerBuffer);
-    return Nan::ThrowError("Failed to create buffer writer");
+  textWriter = xmlNewTextWriterMemory(writerBuffer, 0);
+  if (!textWriter) {
+    xmlBufferFree(writerBuffer);
+    writerBuffer = nullptr;
+    Napi::Error::New(env, "Failed to create buffer writer")
+        .ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  return info.GetReturnValue().Set(Nan::Undefined());
+  return env.Undefined();
 }
 
-NAN_METHOD(XmlTextWriter::BufferContent) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::BufferContent(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
+  // Flush the output buffer so all content reaches writerBuffer.
+  xmlTextWriterFlush(textWriter);
 
-  // Flush the output buffer of the libxml writer instance in order to push all
-  // the content to our writerBuffer.
-  xmlTextWriterFlush(writer->textWriter);
-
-  // Receive bytes from the writerBuffer
-  const xmlChar *buf = xmlBufferContent(writer->writerBuffer);
-
-  return info.GetReturnValue().Set(
-      Nan::New<String>((const char *)buf, xmlBufferLength(writer->writerBuffer))
-          .ToLocalChecked());
+  const xmlChar *buf = xmlBufferContent(writerBuffer);
+  return Napi::String::New(env, (const char *)buf,
+                           xmlBufferLength(writerBuffer));
 }
 
 void XmlTextWriter::clearBuffer() {
-  // Flush the output buffer of the libxml writer instance in order to push all
-  // the content to our writerBuffer.
   xmlTextWriterFlush(textWriter);
-  // Clear the memory buffer
   xmlBufferEmpty(writerBuffer);
 }
 
-NAN_METHOD(XmlTextWriter::BufferEmpty) {
-  Nan::HandleScope scope;
-
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  writer->clearBuffer();
-
-  return info.GetReturnValue().Set(Nan::Undefined());
+Napi::Value XmlTextWriter::BufferEmpty(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  clearBuffer();
+  return env.Undefined();
 }
 
-NAN_METHOD(XmlTextWriter::StartDocument) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::StartDocument(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  Nan::Utf8String version(info[0]);
-  Nan::Utf8String encoding(info[1]);
-  const char *standalone = NULL;
-
-  if (info[2]->IsBoolean()) {
-    const char *wordBool =
-        Nan::To<bool>(info[2]).FromMaybe(false) ? "yes" : "no";
-    standalone = *Nan::Utf8String(Nan::New<String>(wordBool).ToLocalChecked());
-  } else if (info[2]->IsString()) {
-    standalone = *Nan::Utf8String(info[2]);
+  // version — info[0]
+  std::string version_str;
+  const char *version = nullptr;
+  if (!info[0].IsUndefined() && !info[0].IsNull()) {
+    version_str = info[0].As<Napi::String>().Utf8Value();
+    version = version_str.c_str();
   }
 
-  int result = xmlTextWriterStartDocument(
-      writer->textWriter, info[0]->IsUndefined() ? NULL : *version,
-      info[1]->IsUndefined() ? NULL : *encoding, standalone);
+  // encoding — info[1]
+  std::string encoding_str;
+  const char *encoding = nullptr;
+  if (!info[1].IsUndefined() && !info[1].IsNull()) {
+    encoding_str = info[1].As<Napi::String>().Utf8Value();
+    encoding = encoding_str.c_str();
+  }
 
+  // standalone — info[2]: boolean or string
+  std::string standalone_str;
+  const char *standalone = nullptr;
+  if (info.Length() > 2 && !info[2].IsUndefined() && !info[2].IsNull()) {
+    if (info[2].IsBoolean()) {
+      standalone_str = info[2].As<Napi::Boolean>().Value() ? "yes" : "no";
+      standalone = standalone_str.c_str();
+    } else if (info[2].IsString()) {
+      standalone_str = info[2].As<Napi::String>().Utf8Value();
+      standalone = standalone_str.c_str();
+    }
+  }
+
+  int result = xmlTextWriterStartDocument(textWriter, version, encoding,
+                                          standalone);
   THROW_ON_ERROR("Failed to start document");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::EndDocument) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::EndDocument(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  int result = xmlTextWriterEndDocument(writer->textWriter);
-
+  int result = xmlTextWriterEndDocument(textWriter);
   THROW_ON_ERROR("Failed to end document");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::StartElementNS) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::StartElementNS(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
+  std::string prefix_str, name_str, ns_str;
+  const xmlChar *prefix = nullptr, *name = nullptr, *namespaceURI = nullptr;
 
-  Nan::Utf8String prefix(info[0]);
-  Nan::Utf8String name(info[1]);
-  Nan::Utf8String namespaceURI(info[2]);
+  if (!info[0].IsUndefined() && !info[0].IsNull()) {
+    prefix_str = info[0].As<Napi::String>().Utf8Value();
+    prefix = (const xmlChar *)prefix_str.c_str();
+  }
+  if (!info[1].IsUndefined() && !info[1].IsNull()) {
+    name_str = info[1].As<Napi::String>().Utf8Value();
+    name = (const xmlChar *)name_str.c_str();
+  }
+  if (!info[2].IsUndefined() && !info[2].IsNull()) {
+    ns_str = info[2].As<Napi::String>().Utf8Value();
+    namespaceURI = (const xmlChar *)ns_str.c_str();
+  }
 
-  int result = xmlTextWriterStartElementNS(
-      writer->textWriter,
-      info[0]->IsUndefined() ? NULL : (const xmlChar *)*prefix,
-      info[1]->IsUndefined() ? NULL : (const xmlChar *)*name,
-      info[2]->IsUndefined() ? NULL : (const xmlChar *)*namespaceURI);
-
+  int result = xmlTextWriterStartElementNS(textWriter, prefix, name,
+                                           namespaceURI);
   THROW_ON_ERROR("Failed to start element");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::EndElement) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::EndElement(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  int result = xmlTextWriterEndElement(writer->textWriter);
-
+  int result = xmlTextWriterEndElement(textWriter);
   THROW_ON_ERROR("Failed to end element");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::StartAttributeNS) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::StartAttributeNS(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
+  std::string prefix_str, name_str, ns_str;
+  const xmlChar *prefix = nullptr, *name = nullptr, *namespaceURI = nullptr;
 
-  Nan::Utf8String prefix(info[0]);
-  Nan::Utf8String name(info[1]);
-  Nan::Utf8String namespaceURI(info[2]);
+  if (!info[0].IsUndefined() && !info[0].IsNull()) {
+    prefix_str = info[0].As<Napi::String>().Utf8Value();
+    prefix = (const xmlChar *)prefix_str.c_str();
+  }
+  if (!info[1].IsUndefined() && !info[1].IsNull()) {
+    name_str = info[1].As<Napi::String>().Utf8Value();
+    name = (const xmlChar *)name_str.c_str();
+  }
+  if (!info[2].IsUndefined() && !info[2].IsNull()) {
+    ns_str = info[2].As<Napi::String>().Utf8Value();
+    namespaceURI = (const xmlChar *)ns_str.c_str();
+  }
 
-  int result = xmlTextWriterStartAttributeNS(
-      writer->textWriter,
-      info[0]->IsUndefined() ? NULL : (const xmlChar *)*prefix,
-      info[1]->IsUndefined() ? NULL : (const xmlChar *)*name,
-      info[2]->IsUndefined() ? NULL : (const xmlChar *)*namespaceURI);
-
+  int result = xmlTextWriterStartAttributeNS(textWriter, prefix, name,
+                                             namespaceURI);
   THROW_ON_ERROR("Failed to start attribute");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::EndAttribute) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::EndAttribute(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  int result = xmlTextWriterEndAttribute(writer->textWriter);
-
+  int result = xmlTextWriterEndAttribute(textWriter);
   THROW_ON_ERROR("Failed to end attribute");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::StartCdata) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::StartCdata(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  int result = xmlTextWriterStartCDATA(writer->textWriter);
-
+  int result = xmlTextWriterStartCDATA(textWriter);
   THROW_ON_ERROR("Failed to start CDATA section");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::EndCdata) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::EndCdata(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  int result = xmlTextWriterEndCDATA(writer->textWriter);
-
+  int result = xmlTextWriterEndCDATA(textWriter);
   THROW_ON_ERROR("Failed to end CDATA section");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::StartComment) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::StartComment(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  int result = xmlTextWriterStartComment(writer->textWriter);
-
+  int result = xmlTextWriterStartComment(textWriter);
   THROW_ON_ERROR("Failed to start Comment section");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::EndComment) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::EndComment(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  int result = xmlTextWriterEndComment(writer->textWriter);
-
+  int result = xmlTextWriterEndComment(textWriter);
   THROW_ON_ERROR("Failed to end Comment section");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::WriteString) {
-  Nan::HandleScope scope;
+Napi::Value XmlTextWriter::WriteString(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
 
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
-
-  Nan::Utf8String string(info[0]);
-
-  int result =
-      xmlTextWriterWriteString(writer->textWriter, (const xmlChar *)*string);
-
+  std::string str = info[0].As<Napi::String>().Utf8Value();
+  int result = xmlTextWriterWriteString(textWriter,
+                                       (const xmlChar *)str.c_str());
   THROW_ON_ERROR("Failed to write string");
 
-  return info.GetReturnValue().Set(Nan::New<Number>((double)result));
+  return Napi::Number::New(env, static_cast<double>(result));
 }
 
-NAN_METHOD(XmlTextWriter::OutputMemory) {
-  bool clear = info.Length() == 0 || Nan::To<bool>(info[0]).FromMaybe(true);
-  XmlTextWriter *writer = Nan::ObjectWrap::Unwrap<XmlTextWriter>(info.This());
+Napi::Value XmlTextWriter::OutputMemory(const Napi::CallbackInfo &info) {
+  bool clear = (info.Length() == 0) ||
+               info[0].As<Napi::Boolean>().Value();
 
-  BufferContent(info);
+  Napi::Value content = BufferContent(info);
 
   if (clear) {
-    writer->clearBuffer();
+    clearBuffer();
   }
+
+  return content;
 }
 
-void XmlTextWriter::Initialize(Local<Object> target) {
-  Nan::HandleScope scope;
+void XmlTextWriter::Initialize(Napi::Env env, Napi::Object exports) {
+  Napi::Function func = DefineClass(env, "TextWriter", {
+    InstanceMethod("toString",        &XmlTextWriter::BufferContent),
+    InstanceMethod("outputMemory",    &XmlTextWriter::OutputMemory),
+    InstanceMethod("clear",           &XmlTextWriter::BufferEmpty),
+    InstanceMethod("startDocument",   &XmlTextWriter::StartDocument),
+    InstanceMethod("endDocument",     &XmlTextWriter::EndDocument),
+    InstanceMethod("startElementNS",  &XmlTextWriter::StartElementNS),
+    InstanceMethod("endElement",      &XmlTextWriter::EndElement),
+    InstanceMethod("startAttributeNS",&XmlTextWriter::StartAttributeNS),
+    InstanceMethod("endAttribute",    &XmlTextWriter::EndAttribute),
+    InstanceMethod("startCdata",      &XmlTextWriter::StartCdata),
+    InstanceMethod("endCdata",        &XmlTextWriter::EndCdata),
+    InstanceMethod("startComment",    &XmlTextWriter::StartComment),
+    InstanceMethod("endComment",      &XmlTextWriter::EndComment),
+    InstanceMethod("writeString",     &XmlTextWriter::WriteString),
+  });
 
-  Local<FunctionTemplate> writer_t = Nan::New<FunctionTemplate>(NewTextWriter);
+  constructor = Napi::Persistent(func);
+  constructor.SuppressDestruct();
 
-  Nan::Persistent<FunctionTemplate> xml_writer_template;
-  xml_writer_template.Reset(writer_t);
-
-  writer_t->InstanceTemplate()->SetInternalFieldCount(1);
-
-  Nan::SetPrototypeMethod(writer_t, "toString", XmlTextWriter::BufferContent);
-
-  Nan::SetPrototypeMethod(writer_t, "outputMemory",
-                          XmlTextWriter::OutputMemory);
-
-  Nan::SetPrototypeMethod(writer_t, "clear", XmlTextWriter::BufferEmpty);
-
-  Nan::SetPrototypeMethod(writer_t, "startDocument",
-                          XmlTextWriter::StartDocument);
-
-  Nan::SetPrototypeMethod(writer_t, "endDocument", XmlTextWriter::EndDocument);
-
-  Nan::SetPrototypeMethod(writer_t, "startElementNS",
-                          XmlTextWriter::StartElementNS);
-
-  Nan::SetPrototypeMethod(writer_t, "endElement", XmlTextWriter::EndElement);
-
-  Nan::SetPrototypeMethod(writer_t, "startAttributeNS",
-                          XmlTextWriter::StartAttributeNS);
-
-  Nan::SetPrototypeMethod(writer_t, "endAttribute",
-                          XmlTextWriter::EndAttribute);
-
-  Nan::SetPrototypeMethod(writer_t, "startCdata", XmlTextWriter::StartCdata);
-
-  Nan::SetPrototypeMethod(writer_t, "endCdata", XmlTextWriter::EndCdata);
-
-  Nan::SetPrototypeMethod(writer_t, "startComment",
-                          XmlTextWriter::StartComment);
-
-  Nan::SetPrototypeMethod(writer_t, "endComment", XmlTextWriter::EndComment);
-
-  Nan::SetPrototypeMethod(writer_t, "writeString", XmlTextWriter::WriteString);
-
-  Nan::Set(target, Nan::New<String>("TextWriter").ToLocalChecked(),
-           Nan::GetFunction(writer_t).ToLocalChecked());
+  exports.Set("TextWriter", func);
 }
+
 } // namespace libxmljs

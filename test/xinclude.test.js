@@ -10,7 +10,7 @@ describe('xinclude', () => {
   const baseUrl = `${path.resolve(__dirname)}/`;
 
   it('xinclude', () => {
-    const doc = libxml.parseXmlString(xml, {
+    const doc = libxml.parseXml(xml, {
       baseUrl,
       xinclude: true,
       noxincnode: true,
@@ -22,7 +22,7 @@ describe('xinclude', () => {
   });
 
   it('xincnode', () => {
-    const doc = libxml.parseXmlString(xml, {
+    const doc = libxml.parseXml(xml, {
       baseUrl,
       xinclude: true,
       noxincnode: false,
@@ -35,7 +35,7 @@ describe('xinclude', () => {
   });
 
   it('xincludeText', () => {
-    const doc = libxml.parseXmlString(txt, {
+    const doc = libxml.parseXml(txt, {
       baseUrl,
       xinclude: true,
       noxincnode: true,
@@ -45,7 +45,7 @@ describe('xinclude', () => {
   });
 
   it('xincludeDisabled', () => {
-    const doc = libxml.parseXmlString(xml, {
+    const doc = libxml.parseXml(xml, {
       baseUrl,
     });
     const include = doc.get('//xi:include', {

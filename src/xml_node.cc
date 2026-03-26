@@ -1,6 +1,8 @@
 // Copyright 2009, Squish Tech, LLC.
 
-#include <node.h>
+#include <cassert>
+#include <string>
+#include <vector>
 
 #include <libxml/xmlsave.h>
 
@@ -13,261 +15,23 @@
 #include "xml_pi.h"
 #include "xml_text.h"
 
-using namespace v8;
-
 namespace libxmljs {
 
-Nan::Persistent<FunctionTemplate> XmlNode::constructor_template;
+// ---------------------------------------------------------------------------
+// XmlNode constructor / destructor
+// ---------------------------------------------------------------------------
 
-NAN_METHOD(XmlNode::Doc) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  return info.GetReturnValue().Set(node->get_doc());
-}
-
-NAN_METHOD(XmlNode::Namespace) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  // #namespace() Get the node's namespace
-  if (info.Length() == 0) {
-    return info.GetReturnValue().Set(node->get_namespace());
+XmlNode::XmlNode(xmlNode *node) : xml_obj(node), ancestor(nullptr), doc(nullptr) {
+  // nullptr is passed by concrete subclass constructors that use the C++
+  // factory pattern (New(env, node)).  In that case the subclass sets xml_obj
+  // and calls attach() manually after construction.
+  if (xml_obj == nullptr) {
+    return;
   }
 
-  if (info[0]->IsNull())
-    return info.GetReturnValue().Set(node->remove_namespace());
-
-  XmlNamespace *ns = NULL;
-
-  // #namespace(ns) libxml.Namespace object was provided
-  // TODO(sprsquish): check that it was actually given a namespace obj
-  if (info[0]->IsObject())
-    ns = Nan::ObjectWrap::Unwrap<XmlNamespace>(
-        Nan::To<Object>(info[0]).ToLocalChecked());
-
-  // #namespace(href) or #namespace(prefix, href)
-  // if the namespace has already been defined on the node, just set it
-  if (info[0]->IsString()) {
-    Nan::Utf8String ns_to_find(Nan::To<String>(info[0]).ToLocalChecked());
-    xmlNs *found_ns = node->find_namespace(*ns_to_find);
-    if (found_ns) {
-      // maybe build
-      Local<Object> existing = XmlNamespace::New(found_ns);
-      ns = Nan::ObjectWrap::Unwrap<XmlNamespace>(existing);
-    }
-  }
-
-  // Namespace does not seem to exist, so create it.
-  if (!ns) {
-    const unsigned int argc = 3;
-    Local<Value> argv[argc];
-    argv[0] = info.This();
-
-    if (info.Length() == 1) {
-      argv[1] = Nan::Null();
-      argv[2] = info[0];
-    } else {
-      argv[1] = info[0];
-      argv[2] = info[1];
-    }
-
-    Local<Function> define_namespace =
-        Nan::GetFunction(Nan::New(XmlNamespace::constructor_template))
-            .ToLocalChecked();
-
-    // will create a new namespace attached to this node
-    // since we keep the document around, the namespace, like the node, won't be
-    // garbage collected
-    Local<Value> new_ns =
-        Nan::NewInstance(define_namespace, argc, argv).ToLocalChecked();
-    ns = Nan::ObjectWrap::Unwrap<XmlNamespace>(
-        Nan::To<Object>(new_ns).ToLocalChecked());
-  }
-
-  node->set_namespace(ns->xml_obj);
-  return info.GetReturnValue().Set(info.This());
-}
-
-NAN_METHOD(XmlNode::Namespaces) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  // ignore everything but a literal true; different from IsFalse
-  if ((info.Length() == 0) || !info[0]->IsTrue()) {
-    return info.GetReturnValue().Set(node->get_all_namespaces());
-  }
-
-  return info.GetReturnValue().Set(node->get_local_namespaces());
-}
-
-NAN_METHOD(XmlNode::Parent) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  return info.GetReturnValue().Set(node->get_parent());
-}
-
-NAN_METHOD(XmlNode::PrevSibling) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  return info.GetReturnValue().Set(node->get_prev_sibling());
-}
-
-NAN_METHOD(XmlNode::NextSibling) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  return info.GetReturnValue().Set(node->get_next_sibling());
-}
-
-NAN_METHOD(XmlNode::LineNumber) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  return info.GetReturnValue().Set(node->get_line_number());
-}
-
-NAN_METHOD(XmlNode::Type) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  return info.GetReturnValue().Set(node->get_type());
-}
-
-NAN_METHOD(XmlNode::ToString) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  int options = 0;
-
-  if (info.Length() > 0) {
-    if (info[0]->IsBoolean()) {
-      if (info[0]->IsTrue()) {
-        options |= XML_SAVE_FORMAT;
-      }
-    } else if (info[0]->IsObject()) {
-      Local<Object> obj = Nan::To<Object>(info[0]).ToLocalChecked();
-
-      // drop the xml declaration
-      if (Nan::Get(obj, Nan::New<String>("declaration").ToLocalChecked())
-              .ToLocalChecked()
-              ->IsFalse()) {
-        options |= XML_SAVE_NO_DECL;
-      }
-
-      // format save output
-      if (Nan::Get(obj, Nan::New<String>("format").ToLocalChecked())
-              .ToLocalChecked()
-              ->IsTrue()) {
-        options |= XML_SAVE_FORMAT;
-      }
-
-      // no empty tags (only works with XML) ex: <title></title> becomes
-      // <title/>
-      if (Nan::Get(obj, Nan::New<String>("selfCloseEmpty").ToLocalChecked())
-              .ToLocalChecked()
-              ->IsFalse()) {
-        options |= XML_SAVE_NO_EMPTY;
-      }
-
-      // format with non-significant whitespace
-      if (Nan::Get(obj, Nan::New<String>("whitespace").ToLocalChecked())
-              .ToLocalChecked()
-              ->IsTrue()) {
-        options |= XML_SAVE_WSNONSIG;
-      }
-
-      Local<Value> type =
-          Nan::Get(obj, Nan::New<String>("type").ToLocalChecked())
-              .ToLocalChecked();
-      if (Nan::Equals(type, Nan::New<String>("XML").ToLocalChecked())
-              .ToChecked() ||
-          Nan::Equals(type, Nan::New<String>("xml").ToLocalChecked())
-              .ToChecked()) {
-        options |= XML_SAVE_AS_XML; // force XML serialization on HTML doc
-      } else if (Nan::Equals(type, Nan::New<String>("HTML").ToLocalChecked())
-                     .ToChecked() ||
-                 Nan::Equals(type, Nan::New<String>("html").ToLocalChecked())
-                     .ToChecked()) {
-        options |= XML_SAVE_AS_HTML; // force HTML serialization on XML doc
-        // if the document is XML and we want formatted HTML output
-        // we must use the XHTML serializer because the default HTML
-        // serializer only formats node->type = HTML_NODE and not XML_NODEs
-        if ((options & XML_SAVE_FORMAT) &&
-            (options & XML_SAVE_XHTML) == false) {
-          options |= XML_SAVE_XHTML;
-        }
-      } else if (Nan::Equals(type, Nan::New<String>("XHTML").ToLocalChecked())
-                     .ToChecked() ||
-                 Nan::Equals(type, Nan::New<String>("xhtml").ToLocalChecked())
-                     .ToChecked()) {
-        options |= XML_SAVE_XHTML; // force XHTML serialization
-      }
-    }
-  }
-  return info.GetReturnValue().Set(node->to_string(options));
-}
-
-NAN_METHOD(XmlNode::Remove) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  node->remove();
-
-  return info.GetReturnValue().Set(info.This());
-}
-
-NAN_METHOD(XmlNode::Clone) {
-  Nan::HandleScope scope;
-  XmlNode *node = Nan::ObjectWrap::Unwrap<XmlNode>(info.This());
-  assert(node);
-
-  bool recurse = true;
-
-  if (info.Length() == 1 && info[0]->IsBoolean())
-    recurse = Nan::To<bool>(info[0]).ToChecked();
-
-  return info.GetReturnValue().Set(node->clone(recurse));
-}
-
-Local<Value> XmlNode::New(xmlNode *node) {
-  Nan::EscapableHandleScope scope;
-  switch (node->type) {
-  case XML_ATTRIBUTE_NODE:
-    return scope.Escape(XmlAttribute::New(reinterpret_cast<xmlAttr *>(node)));
-  case XML_TEXT_NODE:
-    return scope.Escape(XmlText::New(node));
-  case XML_PI_NODE:
-    return scope.Escape(XmlProcessingInstruction::New(node));
-  case XML_COMMENT_NODE:
-    return scope.Escape(XmlComment::New(node));
-
-  default:
-    // if we don't know how to convert to specific libxmljs wrapper,
-    // wrap in an XmlElement.  There should probably be specific
-    // wrapper types for text nodes etc., but this is what existing
-    // code expects.
-    return scope.Escape(XmlElement::New(node));
-  }
-}
-
-XmlNode::XmlNode(xmlNode *node) : xml_obj(node) {
   xml_obj->_private = this;
-  this->ancestor = NULL;
 
-  if ((xml_obj->doc != NULL) && (xml_obj->doc->_private != NULL)) {
+  if ((xml_obj->doc != nullptr) && (xml_obj->doc->_private != nullptr)) {
     this->doc = xml_obj->doc;
     static_cast<XmlDocument *>(this->doc->_private)->Ref();
   }
@@ -275,31 +39,118 @@ XmlNode::XmlNode(xmlNode *node) : xml_obj(node) {
   this->ref_wrapped_ancestor();
 }
 
+// Property key used to store the XmlNode* back-pointer on the JS object.
+static const char *kXmlNodePtrKey = "__xmlNodePtr__";
+
+void XmlNode::attach(Napi::Object wrapper) {
+  // Store a napi_external holding the XmlNode* on the JS wrapper object so
+  // that XmlNode::Unwrap(env, obj) can recover it without knowing the
+  // concrete subclass type.
+  Napi::Env env = wrapper.Env();
+  Napi::External<XmlNode> ext = Napi::External<XmlNode>::New(env, this);
+  wrapper.DefineProperty(
+      Napi::PropertyDescriptor::Value(kXmlNodePtrKey, ext, napi_default));
+}
+
+XmlNode::~XmlNode() {
+  if ((this->doc != nullptr) && (this->doc->_private != nullptr)) {
+    static_cast<XmlDocument *>(this->doc->_private)->Unref();
+  }
+  this->unref_wrapped_ancestor();
+
+  if (xml_obj == nullptr) {
+    return;
+  }
+
+  xml_obj->_private = nullptr;
+  if (xml_obj->parent == nullptr) {
+    if (get_wrapped_descendant(xml_obj) == nullptr) {
+      xmlFreeNode(xml_obj);
+    }
+  } else {
+    xmlNode *anc = get_wrapped_ancestor_or_root(xml_obj);
+    if ((anc->_private == nullptr) && (anc->parent == nullptr) &&
+        (get_wrapped_descendant(anc, xml_obj) == nullptr)) {
+      xmlFreeNode(anc);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Static factory: wrap a libxml node in the correct JS subclass wrapper.
+// ---------------------------------------------------------------------------
+
+// static
+Napi::Value XmlNode::New(Napi::Env env, xmlNode *node) {
+  switch (node->type) {
+  case XML_ATTRIBUTE_NODE:
+    return XmlAttribute::New(env, reinterpret_cast<xmlAttr *>(node));
+  case XML_TEXT_NODE:
+    return XmlText::New(env, node);
+  case XML_PI_NODE:
+    return XmlProcessingInstruction::New(env, node);
+  case XML_COMMENT_NODE:
+    return XmlComment::New(env, node);
+  default:
+    // Fall back to XmlElement for element nodes and anything else.
+    return XmlElement::New(env, node);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-subclass unwrap helper.
+// All concrete XmlNode subclasses set xml_obj->_private = this (XmlNode*)
+// in their XmlNode base constructor.  We use napi_unwrap to ensure the JS
+// object really is one of our wrappers (it must have an internal field),
+// then read xml_obj->_private for the XmlNode*.
+// ---------------------------------------------------------------------------
+
+// static
+XmlNode *XmlNode::Unwrap(Napi::Env /*env*/, Napi::Object obj) {
+  // Each concrete subclass constructor calls XmlNode::attach(info.This())
+  // which stores a napi_external containing the XmlNode* as a property named
+  // kXmlNodePtrKey on the JS object.  We read it back here.
+  if (!obj.Has(kXmlNodePtrKey)) {
+    return nullptr;
+  }
+  Napi::Value val = obj.Get(kXmlNodePtrKey);
+  if (!val.IsExternal()) {
+    return nullptr;
+  }
+  return val.As<Napi::External<XmlNode>>().Data();
+}
+
+// ---------------------------------------------------------------------------
+// Static tree-walk helpers
+// ---------------------------------------------------------------------------
+
 /*
- * Return the (non-document) root, or a wrapped ancestor: whichever is closest
+ * Return the (non-document) root, or a wrapped ancestor: whichever is closest.
  */
-xmlNode *get_wrapped_ancestor_or_root(xmlNode *xml_obj) {
-  while ((xml_obj->parent != NULL) &&
+// static
+xmlNode *XmlNode::get_wrapped_ancestor_or_root(xmlNode *xml_obj) {
+  while ((xml_obj->parent != nullptr) &&
          (static_cast<void *>(xml_obj->doc) !=
           static_cast<void *>(xml_obj->parent)) &&
-         (xml_obj->parent->_private == NULL)) {
+         (xml_obj->parent->_private == nullptr)) {
     xml_obj = xml_obj->parent;
   }
-  return ((xml_obj->parent != NULL) && (static_cast<void *>(xml_obj->doc) !=
-                                        static_cast<void *>(xml_obj->parent)))
+  return ((xml_obj->parent != nullptr) &&
+          (static_cast<void *>(xml_obj->doc) !=
+           static_cast<void *>(xml_obj->parent)))
              ? xml_obj->parent
              : xml_obj;
 }
 
 /*
- * Search linked list for javascript wrapper, ignoring given node.
+ * Search linked list for a JS wrapper, ignoring the given node.
  */
-xmlAttr *get_wrapped_attr_in_list(xmlAttr *xml_obj, void *skip_xml_obj) {
-  xmlAttr *wrapped_attr = NULL;
-  while (xml_obj != NULL) {
-    if ((xml_obj != skip_xml_obj) && (xml_obj->_private != NULL)) {
+static xmlAttr *get_wrapped_attr_in_list(xmlAttr *xml_obj, void *skip_xml_obj) {
+  xmlAttr *wrapped_attr = nullptr;
+  while (xml_obj != nullptr) {
+    if ((xml_obj != skip_xml_obj) && (xml_obj->_private != nullptr)) {
       wrapped_attr = xml_obj;
-      xml_obj = NULL;
+      xml_obj = nullptr;
     } else {
       xml_obj = xml_obj->next;
     }
@@ -307,12 +158,12 @@ xmlAttr *get_wrapped_attr_in_list(xmlAttr *xml_obj, void *skip_xml_obj) {
   return wrapped_attr;
 }
 
-xmlNs *get_wrapped_ns_in_list(xmlNs *xml_obj, void *skip_xml_obj) {
-  xmlNs *wrapped_ns = NULL;
-  while (xml_obj != NULL) {
-    if ((xml_obj != skip_xml_obj) && (xml_obj->_private != NULL)) {
+static xmlNs *get_wrapped_ns_in_list(xmlNs *xml_obj, void *skip_xml_obj) {
+  xmlNs *wrapped_ns = nullptr;
+  while (xml_obj != nullptr) {
+    if ((xml_obj != skip_xml_obj) && (xml_obj->_private != nullptr)) {
       wrapped_ns = xml_obj;
-      xml_obj = NULL;
+      xml_obj = nullptr;
     } else {
       xml_obj = xml_obj->next;
     }
@@ -320,28 +171,28 @@ xmlNs *get_wrapped_ns_in_list(xmlNs *xml_obj, void *skip_xml_obj) {
   return wrapped_ns;
 }
 
-xmlNode *get_wrapped_node_in_children(xmlNode *xml_obj, xmlNode *skip_xml_obj);
+// Forward declaration.
+static xmlNode *get_wrapped_node_in_children(xmlNode *xml_obj, xmlNode *skip_xml_obj);
 
 /*
- * Search document for javascript wrapper, ignoring given node.
+ * Search document for a JS wrapper, ignoring the given node.
  * Based on xmlFreeDoc.
  */
-xmlNode *get_wrapped_node_in_document(xmlDoc *xml_obj, xmlNode *skip_xml_obj) {
-  xmlNode *wrapped_node = NULL;
-  if ((xml_obj->extSubset != NULL) && (xml_obj->extSubset->_private != NULL) &&
+static xmlNode *get_wrapped_node_in_document(xmlDoc *xml_obj, xmlNode *skip_xml_obj) {
+  xmlNode *wrapped_node = nullptr;
+  if ((xml_obj->extSubset != nullptr) && (xml_obj->extSubset->_private != nullptr) &&
       (static_cast<void *>(xml_obj->extSubset) != skip_xml_obj)) {
     wrapped_node = reinterpret_cast<xmlNode *>(xml_obj->extSubset);
   }
-  if ((wrapped_node == NULL) && (xml_obj->intSubset != NULL) &&
-      (xml_obj->intSubset->_private != NULL) &&
+  if ((wrapped_node == nullptr) && (xml_obj->intSubset != nullptr) &&
+      (xml_obj->intSubset->_private != nullptr) &&
       (static_cast<void *>(xml_obj->intSubset) != skip_xml_obj)) {
     wrapped_node = reinterpret_cast<xmlNode *>(xml_obj->intSubset);
   }
-  if ((wrapped_node == NULL) && (xml_obj->children != NULL)) {
-    wrapped_node =
-        get_wrapped_node_in_children(xml_obj->children, skip_xml_obj);
+  if ((wrapped_node == nullptr) && (xml_obj->children != nullptr)) {
+    wrapped_node = get_wrapped_node_in_children(xml_obj->children, skip_xml_obj);
   }
-  if ((wrapped_node == NULL) && (xml_obj->oldNs != NULL)) {
+  if ((wrapped_node == nullptr) && (xml_obj->oldNs != nullptr)) {
     wrapped_node = reinterpret_cast<xmlNode *>(
         get_wrapped_ns_in_list(xml_obj->oldNs, skip_xml_obj));
   }
@@ -349,12 +200,11 @@ xmlNode *get_wrapped_node_in_document(xmlDoc *xml_obj, xmlNode *skip_xml_obj) {
 }
 
 /*
- * Search children of node for javascript wrapper, ignoring given node.
+ * Search children of a node for a JS wrapper, ignoring the given node.
  * Based on xmlFreeNodeList.
  */
-xmlNode *get_wrapped_node_in_children(xmlNode *xml_obj, xmlNode *skip_xml_obj) {
-
-  xmlNode *wrapped_node = NULL;
+static xmlNode *get_wrapped_node_in_children(xmlNode *xml_obj, xmlNode *skip_xml_obj) {
+  xmlNode *wrapped_node = nullptr;
 
   if (xml_obj->type == XML_NAMESPACE_DECL) {
     return reinterpret_cast<xmlNode *>(get_wrapped_ns_in_list(
@@ -371,36 +221,35 @@ xmlNode *get_wrapped_node_in_children(xmlNode *xml_obj, xmlNode *skip_xml_obj) {
   }
 
   xmlNode *next;
-  while (xml_obj != NULL) {
+  while (xml_obj != nullptr) {
     next = xml_obj->next;
 
-    if ((xml_obj != skip_xml_obj) && (xml_obj->_private != NULL)) {
+    if ((xml_obj != skip_xml_obj) && (xml_obj->_private != nullptr)) {
       wrapped_node = xml_obj;
     } else {
-
-      if ((xml_obj->children != NULL) &&
+      if ((xml_obj->children != nullptr) &&
           (xml_obj->type != XML_ENTITY_REF_NODE)) {
-        wrapped_node =
-            get_wrapped_node_in_children(xml_obj->children, skip_xml_obj);
+        wrapped_node = get_wrapped_node_in_children(xml_obj->children, skip_xml_obj);
       }
 
-      if ((wrapped_node == NULL) && ((xml_obj->type == XML_ELEMENT_NODE) ||
-                                     (xml_obj->type == XML_XINCLUDE_START) ||
-                                     (xml_obj->type == XML_XINCLUDE_END))) {
+      if ((wrapped_node == nullptr) &&
+          ((xml_obj->type == XML_ELEMENT_NODE) ||
+           (xml_obj->type == XML_XINCLUDE_START) ||
+           (xml_obj->type == XML_XINCLUDE_END))) {
 
-        if ((wrapped_node == NULL) && (xml_obj->properties != NULL)) {
+        if ((wrapped_node == nullptr) && (xml_obj->properties != nullptr)) {
           wrapped_node = reinterpret_cast<xmlNode *>(
               get_wrapped_attr_in_list(xml_obj->properties, skip_xml_obj));
         }
 
-        if ((wrapped_node == NULL) && (xml_obj->nsDef != NULL)) {
+        if ((wrapped_node == nullptr) && (xml_obj->nsDef != nullptr)) {
           wrapped_node = reinterpret_cast<xmlNode *>(
               get_wrapped_ns_in_list(xml_obj->nsDef, skip_xml_obj));
         }
       }
     }
 
-    if (wrapped_node != NULL) {
+    if (wrapped_node != nullptr) {
       break;
     }
 
@@ -411,45 +260,43 @@ xmlNode *get_wrapped_node_in_children(xmlNode *xml_obj, xmlNode *skip_xml_obj) {
 }
 
 /*
- * Search descendants of node to find javascript wrapper,
- * optionally ignoring given node. Based on xmlFreeNode.
+ * Search descendants of a node for a JS wrapper, optionally ignoring a node.
+ * Based on xmlFreeNode.
  */
-xmlNode *get_wrapped_descendant(xmlNode *xml_obj,
-                                xmlNode *skip_xml_obj = NULL) {
-
-  xmlNode *wrapped_descendant = NULL;
+// static
+xmlNode *XmlNode::get_wrapped_descendant(xmlNode *xml_obj, xmlNode *skip_xml_obj) {
+  xmlNode *wrapped_descendant = nullptr;
 
   if (xml_obj->type == XML_DTD_NODE) {
-    return (xml_obj->children == NULL)
-               ? NULL
+    return (xml_obj->children == nullptr)
+               ? nullptr
                : get_wrapped_node_in_children(xml_obj->children, skip_xml_obj);
   }
 
   if (xml_obj->type == XML_NAMESPACE_DECL) {
-    return NULL;
+    return nullptr;
   }
 
   if (xml_obj->type == XML_ATTRIBUTE_NODE) {
-    return (xml_obj->children == NULL)
-               ? NULL
+    return (xml_obj->children == nullptr)
+               ? nullptr
                : get_wrapped_node_in_children(xml_obj->children, skip_xml_obj);
   }
 
-  if ((xml_obj->children != NULL) && (xml_obj->type != XML_ENTITY_REF_NODE)) {
-    wrapped_descendant =
-        get_wrapped_node_in_children(xml_obj->children, skip_xml_obj);
+  if ((xml_obj->children != nullptr) && (xml_obj->type != XML_ENTITY_REF_NODE)) {
+    wrapped_descendant = get_wrapped_node_in_children(xml_obj->children, skip_xml_obj);
   }
 
   if ((xml_obj->type == XML_ELEMENT_NODE) ||
       (xml_obj->type == XML_XINCLUDE_START) ||
       (xml_obj->type == XML_XINCLUDE_END)) {
 
-    if ((wrapped_descendant == NULL) && (xml_obj->properties != NULL)) {
+    if ((wrapped_descendant == nullptr) && (xml_obj->properties != nullptr)) {
       wrapped_descendant = reinterpret_cast<xmlNode *>(
           get_wrapped_attr_in_list(xml_obj->properties, skip_xml_obj));
     }
 
-    if ((wrapped_descendant == NULL) && (xml_obj->nsDef != NULL)) {
+    if ((wrapped_descendant == nullptr) && (xml_obj->nsDef != nullptr)) {
       wrapped_descendant = reinterpret_cast<xmlNode *>(
           get_wrapped_ns_in_list(xml_obj->nsDef, skip_xml_obj));
     }
@@ -458,74 +305,55 @@ xmlNode *get_wrapped_descendant(xmlNode *xml_obj,
   return wrapped_descendant;
 }
 
-XmlNode::~XmlNode() {
-  if ((this->doc != NULL) && (this->doc->_private != NULL)) {
-    static_cast<XmlDocument *>(this->doc->_private)->Unref();
-  }
-  this->unref_wrapped_ancestor();
-  if (xml_obj == NULL)
-    return;
-
-  xml_obj->_private = NULL;
-  if (xml_obj->parent == NULL) {
-    if (get_wrapped_descendant(xml_obj) == NULL) {
-      xmlFreeNode(xml_obj);
-    }
-  } else {
-    xmlNode *ancestor = get_wrapped_ancestor_or_root(xml_obj);
-    if ((ancestor->_private == NULL) && (ancestor->parent == NULL) &&
-        (get_wrapped_descendant(ancestor, xml_obj) == NULL)) {
-      xmlFreeNode(ancestor);
-    }
-  }
-}
+// ---------------------------------------------------------------------------
+// Ancestor ref-count management
+// ---------------------------------------------------------------------------
 
 xmlNode *XmlNode::get_wrapped_ancestor() {
-  xmlNode *ancestor = get_wrapped_ancestor_or_root(xml_obj);
-  return ((xml_obj == ancestor) || (ancestor->_private == NULL)) ? NULL
-                                                                 : ancestor;
+  xmlNode *anc = get_wrapped_ancestor_or_root(xml_obj);
+  return ((xml_obj == anc) || (anc->_private == nullptr)) ? nullptr : anc;
 }
 
 void XmlNode::ref_wrapped_ancestor() {
-  xmlNode *ancestor = this->get_wrapped_ancestor();
+  xmlNode *anc = this->get_wrapped_ancestor();
 
-  // if our closest wrapped ancestor has changed then we either
-  // got removed, added, or a closer ancestor was wrapped
-  if (ancestor != this->ancestor) {
+  // If our closest wrapped ancestor has changed, release the old ref first.
+  if (anc != this->ancestor) {
     this->unref_wrapped_ancestor();
-    this->ancestor = ancestor;
+    this->ancestor = anc;
   }
 
-  if (this->ancestor != NULL) {
+  if (this->ancestor != nullptr) {
     XmlNode *node = static_cast<XmlNode *>(this->ancestor->_private);
-    node->Ref();
+    node->Ref_();
   }
 }
 
 void XmlNode::unref_wrapped_ancestor() {
-  if ((this->ancestor != NULL) && (this->ancestor->_private != NULL)) {
-    (static_cast<XmlNode *>(this->ancestor->_private))->Unref();
+  if ((this->ancestor != nullptr) && (this->ancestor->_private != nullptr)) {
+    static_cast<XmlNode *>(this->ancestor->_private)->Unref_();
   }
-  this->ancestor = NULL;
+  this->ancestor = nullptr;
 }
 
-Local<Value> XmlNode::get_doc() {
-  Nan::EscapableHandleScope scope;
-  return scope.Escape(XmlDocument::New(xml_obj->doc));
+// ---------------------------------------------------------------------------
+// Helper method implementations
+// ---------------------------------------------------------------------------
+
+Napi::Value XmlNode::get_doc(Napi::Env env) {
+  return XmlDocument::New(env, xml_obj->doc);
 }
 
-Local<Value> XmlNode::remove_namespace() {
-  xml_obj->ns = NULL;
-  return Nan::Null();
+Napi::Value XmlNode::remove_namespace(Napi::Env env) {
+  xml_obj->ns = nullptr;
+  return env.Null();
 }
 
-Local<Value> XmlNode::get_namespace() {
-  Nan::EscapableHandleScope scope;
+Napi::Value XmlNode::get_namespace(Napi::Env env) {
   if (!xml_obj->ns) {
-    return scope.Escape(Nan::Null());
+    return env.Null();
   }
-
-  return scope.Escape(XmlNamespace::New(xml_obj->ns));
+  return XmlNamespace::New(env, xml_obj->ns);
 }
 
 void XmlNode::set_namespace(xmlNs *ns) {
@@ -534,94 +362,78 @@ void XmlNode::set_namespace(xmlNs *ns) {
 }
 
 xmlNs *XmlNode::find_namespace(const char *search_str) {
-  xmlNs *ns = NULL;
+  xmlNs *ns = nullptr;
 
-  // Find by prefix first
-  ns = xmlSearchNs(xml_obj->doc, xml_obj, (const xmlChar *)search_str);
+  // Try prefix first.
+  ns = xmlSearchNs(xml_obj->doc, xml_obj,
+                   reinterpret_cast<const xmlChar *>(search_str));
 
-  // Or find by href
-  if (!ns)
-    ns = xmlSearchNsByHref(xml_obj->doc, xml_obj, (const xmlChar *)search_str);
+  // Fall back to href.
+  if (!ns) {
+    ns = xmlSearchNsByHref(xml_obj->doc, xml_obj,
+                           reinterpret_cast<const xmlChar *>(search_str));
+  }
 
   return ns;
 }
 
-Local<Value> XmlNode::get_all_namespaces() {
-  Nan::EscapableHandleScope scope;
-
-  // Iterate through namespaces
-  Local<Array> namespaces = Nan::New<Array>();
+Napi::Value XmlNode::get_all_namespaces(Napi::Env env) {
+  Napi::Array namespaces = Napi::Array::New(env);
   xmlNs **nsList = xmlGetNsList(xml_obj->doc, xml_obj);
-  if (nsList != NULL) {
-    for (int i = 0; nsList[i] != NULL; i++) {
-      Local<Number> index = Nan::New<Number>(i);
-      Local<Object> ns = XmlNamespace::New(nsList[i]);
-      Nan::Set(namespaces, index, ns);
+  if (nsList != nullptr) {
+    for (int i = 0; nsList[i] != nullptr; i++) {
+      namespaces.Set(i, XmlNamespace::New(env, nsList[i]));
     }
     xmlFree(nsList);
   }
-
-  return scope.Escape(namespaces);
+  return namespaces;
 }
 
-Local<Value> XmlNode::get_local_namespaces() {
-  Nan::EscapableHandleScope scope;
-
-  // Iterate through local namespaces
-  Local<Array> namespaces = Nan::New<Array>();
+Napi::Value XmlNode::get_local_namespaces(Napi::Env env) {
+  Napi::Array namespaces = Napi::Array::New(env);
   xmlNs *nsDef = xml_obj->nsDef;
   for (int i = 0; nsDef; i++, nsDef = nsDef->next) {
-    Local<Number> index = Nan::New<Number>(i);
-    Local<Object> ns = XmlNamespace::New(nsDef);
-    Nan::Set(namespaces, index, ns);
+    namespaces.Set(i, XmlNamespace::New(env, nsDef));
   }
-
-  return scope.Escape(namespaces);
+  return namespaces;
 }
 
-Local<Value> XmlNode::get_parent() {
-  Nan::EscapableHandleScope scope;
-
+Napi::Value XmlNode::get_parent(Napi::Env env) {
   if (xml_obj->parent) {
-    return scope.Escape(XmlElement::New(xml_obj->parent));
+    // If the parent is actually the document node, return the document wrapper
+    if (static_cast<void *>(xml_obj->parent) ==
+        static_cast<void *>(xml_obj->doc)) {
+      return XmlDocument::New(env, xml_obj->doc);
+    }
+    return XmlElement::New(env, xml_obj->parent);
   }
-
-  return scope.Escape(XmlDocument::New(xml_obj->doc));
+  return XmlDocument::New(env, xml_obj->doc);
 }
 
-Local<Value> XmlNode::get_prev_sibling() {
-  Nan::EscapableHandleScope scope;
+Napi::Value XmlNode::get_prev_sibling(Napi::Env env) {
   if (xml_obj->prev) {
-    return scope.Escape(XmlNode::New(xml_obj->prev));
+    return XmlNode::New(env, xml_obj->prev);
   }
-
-  return scope.Escape(Nan::Null());
+  return env.Null();
 }
 
-Local<Value> XmlNode::get_next_sibling() {
-  Nan::EscapableHandleScope scope;
+Napi::Value XmlNode::get_next_sibling(Napi::Env env) {
   if (xml_obj->next) {
-    return scope.Escape(XmlNode::New(xml_obj->next));
+    return XmlNode::New(env, xml_obj->next);
   }
-
-  return scope.Escape(Nan::Null());
+  return env.Null();
 }
 
-Local<Value> XmlNode::get_line_number() {
-  Nan::EscapableHandleScope scope;
-  return scope.Escape(Nan::New<Integer>(uint32_t(xmlGetLineNo(xml_obj))));
+Napi::Value XmlNode::get_line_number(Napi::Env env) {
+  return Napi::Number::New(env, static_cast<double>(xmlGetLineNo(xml_obj)));
 }
 
-Local<Value> XmlNode::clone(bool recurse) {
-  Nan::EscapableHandleScope scope;
-
-  xmlNode *new_xml_obj = xmlDocCopyNode(xml_obj, xml_obj->doc, recurse);
-  return scope.Escape(XmlNode::New(new_xml_obj));
+Napi::Value XmlNode::clone(Napi::Env env, bool recurse) {
+  xmlNode *new_xml_obj = xmlDocCopyNode(xml_obj, xml_obj->doc, recurse ? 1 : 0);
+  return XmlNode::New(env, new_xml_obj);
 }
 
-Local<Value> XmlNode::to_string(int options) {
-  Nan::EscapableHandleScope scope;
-
+Napi::Value XmlNode::to_string(Napi::Env env, int options) {
   xmlBuffer *buf = xmlBufferCreate();
   const char *enc = "UTF-8";
 
@@ -632,20 +444,16 @@ Local<Value> XmlNode::to_string(int options) {
   const xmlChar *xmlstr = xmlBufferContent(buf);
 
   if (xmlstr) {
-    Local<String> str =
-        Nan::New<String>((char *)xmlstr, xmlBufferLength(buf)).ToLocalChecked();
+    Napi::String str = Napi::String::New(
+        env, reinterpret_cast<const char *>(xmlstr), xmlBufferLength(buf));
     xmlSaveClose(savectx);
-
     xmlBufferFree(buf);
-
-    return scope.Escape(str);
-  } else {
-    xmlSaveClose(savectx);
-
-    xmlBufferFree(buf);
-
-    return scope.Escape(Nan::Null());
+    return str;
   }
+
+  xmlSaveClose(savectx);
+  xmlBufferFree(buf);
+  return env.Null();
 }
 
 void XmlNode::remove() {
@@ -653,7 +461,9 @@ void XmlNode::remove() {
   xmlUnlinkNode(xml_obj);
 }
 
-void XmlNode::add_child(xmlNode *child) { xmlAddChild(xml_obj, child); }
+void XmlNode::add_child(xmlNode *child) {
+  xmlAddChild(xml_obj, child);
+}
 
 void XmlNode::add_prev_sibling(xmlNode *node) {
   xmlAddPrevSibling(xml_obj, node);
@@ -665,97 +475,198 @@ void XmlNode::add_next_sibling(xmlNode *node) {
 
 xmlNode *XmlNode::import_node(xmlNode *node) {
   if (xml_obj->doc == node->doc) {
-    if ((node->parent != NULL) && (node->_private != NULL)) {
+    if ((node->parent != nullptr) && (node->_private != nullptr)) {
       static_cast<XmlNode *>(node->_private)->remove();
     }
     return node;
-  } else {
-    return xmlDocCopyNode(node, xml_obj->doc, 1);
   }
+  return xmlDocCopyNode(node, xml_obj->doc, 1);
 }
 
-Local<Value> XmlNode::get_type() {
-  Nan::EscapableHandleScope scope;
+Napi::Value XmlNode::get_type(Napi::Env env) {
   switch (xml_obj->type) {
-  case XML_ELEMENT_NODE:
-    return scope.Escape(Nan::New<String>("element").ToLocalChecked());
-  case XML_ATTRIBUTE_NODE:
-    return scope.Escape(Nan::New<String>("attribute").ToLocalChecked());
-  case XML_TEXT_NODE:
-    return scope.Escape(Nan::New<String>("text").ToLocalChecked());
-  case XML_CDATA_SECTION_NODE:
-    return scope.Escape(Nan::New<String>("cdata").ToLocalChecked());
-  case XML_ENTITY_REF_NODE:
-    return scope.Escape(Nan::New<String>("entity_ref").ToLocalChecked());
-  case XML_ENTITY_NODE:
-    return scope.Escape(Nan::New<String>("entity").ToLocalChecked());
-  case XML_PI_NODE:
-    return scope.Escape(Nan::New<String>("pi").ToLocalChecked());
-  case XML_COMMENT_NODE:
-    return scope.Escape(Nan::New<String>("comment").ToLocalChecked());
-  case XML_DOCUMENT_NODE:
-    return scope.Escape(Nan::New<String>("document").ToLocalChecked());
-  case XML_DOCUMENT_TYPE_NODE:
-    return scope.Escape(Nan::New<String>("document_type").ToLocalChecked());
-  case XML_DOCUMENT_FRAG_NODE:
-    return scope.Escape(Nan::New<String>("document_frag").ToLocalChecked());
-  case XML_NOTATION_NODE:
-    return scope.Escape(Nan::New<String>("notation").ToLocalChecked());
-  case XML_HTML_DOCUMENT_NODE:
-    return scope.Escape(Nan::New<String>("html_document").ToLocalChecked());
-  case XML_DTD_NODE:
-    return scope.Escape(Nan::New<String>("dtd").ToLocalChecked());
-  case XML_ELEMENT_DECL:
-    return scope.Escape(Nan::New<String>("element_decl").ToLocalChecked());
-  case XML_ATTRIBUTE_DECL:
-    return scope.Escape(Nan::New<String>("attribute_decl").ToLocalChecked());
-  case XML_ENTITY_DECL:
-    return scope.Escape(Nan::New<String>("entity_decl").ToLocalChecked());
-  case XML_NAMESPACE_DECL:
-    return scope.Escape(Nan::New<String>("namespace_decl").ToLocalChecked());
-  case XML_XINCLUDE_START:
-    return scope.Escape(Nan::New<String>("xinclude_start").ToLocalChecked());
-  case XML_XINCLUDE_END:
-    return scope.Escape(Nan::New<String>("xinclude_end").ToLocalChecked());
-  case XML_DOCB_DOCUMENT_NODE:
-    return scope.Escape(Nan::New<String>("docb_document").ToLocalChecked());
+  case XML_ELEMENT_NODE:        return Napi::String::New(env, "element");
+  case XML_ATTRIBUTE_NODE:      return Napi::String::New(env, "attribute");
+  case XML_TEXT_NODE:           return Napi::String::New(env, "text");
+  case XML_CDATA_SECTION_NODE:  return Napi::String::New(env, "cdata");
+  case XML_ENTITY_REF_NODE:     return Napi::String::New(env, "entity_ref");
+  case XML_ENTITY_NODE:         return Napi::String::New(env, "entity");
+  case XML_PI_NODE:             return Napi::String::New(env, "pi");
+  case XML_COMMENT_NODE:        return Napi::String::New(env, "comment");
+  case XML_DOCUMENT_NODE:       return Napi::String::New(env, "document");
+  case XML_DOCUMENT_TYPE_NODE:  return Napi::String::New(env, "document_type");
+  case XML_DOCUMENT_FRAG_NODE:  return Napi::String::New(env, "document_frag");
+  case XML_NOTATION_NODE:       return Napi::String::New(env, "notation");
+  case XML_HTML_DOCUMENT_NODE:  return Napi::String::New(env, "html_document");
+  case XML_DTD_NODE:            return Napi::String::New(env, "dtd");
+  case XML_ELEMENT_DECL:        return Napi::String::New(env, "element_decl");
+  case XML_ATTRIBUTE_DECL:      return Napi::String::New(env, "attribute_decl");
+  case XML_ENTITY_DECL:         return Napi::String::New(env, "entity_decl");
+  case XML_NAMESPACE_DECL:      return Napi::String::New(env, "namespace_decl");
+  case XML_XINCLUDE_START:      return Napi::String::New(env, "xinclude_start");
+  case XML_XINCLUDE_END:        return Napi::String::New(env, "xinclude_end");
+  case XML_DOCB_DOCUMENT_NODE:  return Napi::String::New(env, "docb_document");
+  }
+  return env.Null();
+}
+
+// ---------------------------------------------------------------------------
+// Prototype method wrappers — called by subclass instance method delegates.
+// Each subclass registers these as InstanceMethods by wrapping with a lambda
+// or a concrete method that calls the corresponding XmlNode method.
+// ---------------------------------------------------------------------------
+
+Napi::Value XmlNode::Doc_Method(const Napi::CallbackInfo& info) {
+  return get_doc(info.Env());
+}
+
+Napi::Value XmlNode::Namespace_Method(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  // namespace() — get the node's current namespace
+  if (info.Length() == 0) {
+    return get_namespace(env);
   }
 
-  return scope.Escape(Nan::Null());
+  // namespace(null) — remove the namespace
+  if (info[0].IsNull()) {
+    return remove_namespace(env);
+  }
+
+  XmlNamespace *ns = nullptr;
+
+  // namespace(nsObj) — an XmlNamespace JS object was provided
+  if (info[0].IsObject() &&
+      info[0].As<Napi::Object>().InstanceOf(XmlNamespace::constructor.Value())) {
+    ns = Napi::ObjectWrap<XmlNamespace>::Unwrap(info[0].As<Napi::Object>());
+  }
+
+  // namespace(href) or namespace(prefix, href) — search existing namespaces
+  if (info[0].IsString()) {
+    std::string ns_to_find = info[0].As<Napi::String>().Utf8Value();
+    xmlNs *found_ns = find_namespace(ns_to_find.c_str());
+    if (found_ns) {
+      Napi::Object existing = XmlNamespace::New(env, found_ns);
+      ns = XmlNamespace::Unwrap(existing);
+    }
+  }
+
+  // Namespace not found — create a new one attached to this node.
+  if (!ns) {
+    std::vector<napi_value> argv;
+    argv.push_back(Value_());  // the JS object for this node
+
+    if (info.Length() == 1) {
+      argv.push_back(env.Null());
+      argv.push_back(info[0]);
+    } else {
+      argv.push_back(info[0]);
+      argv.push_back(info[1]);
+    }
+
+    Napi::Object new_ns = XmlNamespace::constructor.New(argv);
+    ns = XmlNamespace::Unwrap(new_ns);
+  }
+
+  set_namespace(ns->xml_obj);
+  return Value_();
 }
 
-void XmlNode::Initialize(Local<Object> target) {
-  Nan::HandleScope scope;
-  Local<FunctionTemplate> tmpl = Nan::New<FunctionTemplate>();
-  constructor_template.Reset(tmpl);
-  tmpl->InstanceTemplate()->SetInternalFieldCount(1);
-
-  Nan::SetPrototypeMethod(tmpl, "doc", XmlNode::Doc);
-
-  Nan::SetPrototypeMethod(tmpl, "parent", XmlNode::Parent);
-
-  Nan::SetPrototypeMethod(tmpl, "namespace", XmlNode::Namespace);
-
-  Nan::SetPrototypeMethod(tmpl, "namespaces", XmlNode::Namespaces);
-
-  Nan::SetPrototypeMethod(tmpl, "prevSibling", XmlNode::PrevSibling);
-
-  Nan::SetPrototypeMethod(tmpl, "nextSibling", XmlNode::NextSibling);
-
-  Nan::SetPrototypeMethod(tmpl, "line", XmlNode::LineNumber);
-
-  Nan::SetPrototypeMethod(tmpl, "type", XmlNode::Type);
-
-  Nan::SetPrototypeMethod(tmpl, "remove", XmlNode::Remove);
-
-  Nan::SetPrototypeMethod(tmpl, "clone", XmlNode::Clone);
-
-  Nan::SetPrototypeMethod(tmpl, "toString", XmlNode::ToString);
-
-  XmlElement::Initialize(target);
-  XmlText::Initialize(target);
-  XmlComment::Initialize(target);
-  XmlProcessingInstruction::Initialize(target);
-  XmlAttribute::Initialize(target);
+Napi::Value XmlNode::Namespaces_Method(const Napi::CallbackInfo& info) {
+  // Treat only a literal `true` as requesting local-only namespaces.
+  if ((info.Length() == 0) || !info[0].IsBoolean() ||
+      !info[0].As<Napi::Boolean>().Value()) {
+    return get_all_namespaces(info.Env());
+  }
+  return get_local_namespaces(info.Env());
 }
+
+Napi::Value XmlNode::Parent_Method(const Napi::CallbackInfo& info) {
+  return get_parent(info.Env());
+}
+
+Napi::Value XmlNode::PrevSibling_Method(const Napi::CallbackInfo& info) {
+  return get_prev_sibling(info.Env());
+}
+
+Napi::Value XmlNode::NextSibling_Method(const Napi::CallbackInfo& info) {
+  return get_next_sibling(info.Env());
+}
+
+Napi::Value XmlNode::LineNumber_Method(const Napi::CallbackInfo& info) {
+  return get_line_number(info.Env());
+}
+
+Napi::Value XmlNode::Type_Method(const Napi::CallbackInfo& info) {
+  return get_type(info.Env());
+}
+
+Napi::Value XmlNode::ToString_Method(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  int options = 0;
+
+  if (info.Length() > 0) {
+    if (info[0].IsBoolean()) {
+      if (info[0].As<Napi::Boolean>().Value()) {
+        options |= XML_SAVE_FORMAT;
+      }
+    } else if (info[0].IsObject()) {
+      Napi::Object obj = info[0].As<Napi::Object>();
+
+      // drop the XML declaration
+      if (obj.Has("declaration") && obj.Get("declaration").IsBoolean() &&
+          !obj.Get("declaration").As<Napi::Boolean>().Value()) {
+        options |= XML_SAVE_NO_DECL;
+      }
+
+      // format output
+      if (obj.Has("format") && obj.Get("format").IsBoolean() &&
+          obj.Get("format").As<Napi::Boolean>().Value()) {
+        options |= XML_SAVE_FORMAT;
+      }
+
+      // no empty tags (only XML)
+      if (obj.Has("selfCloseEmpty") && obj.Get("selfCloseEmpty").IsBoolean() &&
+          !obj.Get("selfCloseEmpty").As<Napi::Boolean>().Value()) {
+        options |= XML_SAVE_NO_EMPTY;
+      }
+
+      // non-significant whitespace
+      if (obj.Has("whitespace") && obj.Get("whitespace").IsBoolean() &&
+          obj.Get("whitespace").As<Napi::Boolean>().Value()) {
+        options |= XML_SAVE_WSNONSIG;
+      }
+
+      if (obj.Has("type") && obj.Get("type").IsString()) {
+        std::string type_str = obj.Get("type").As<Napi::String>().Utf8Value();
+        if (type_str == "XML" || type_str == "xml") {
+          options |= XML_SAVE_AS_XML;
+        } else if (type_str == "HTML" || type_str == "html") {
+          options |= XML_SAVE_AS_HTML;
+          if ((options & XML_SAVE_FORMAT) && !(options & XML_SAVE_XHTML)) {
+            options |= XML_SAVE_XHTML;
+          }
+        } else if (type_str == "XHTML" || type_str == "xhtml") {
+          options |= XML_SAVE_XHTML;
+        }
+      }
+    }
+  }
+
+  return to_string(env, options);
+}
+
+Napi::Value XmlNode::Remove_Method(const Napi::CallbackInfo& info) {
+  remove();
+  return Value_();
+}
+
+Napi::Value XmlNode::Clone_Method(const Napi::CallbackInfo& info) {
+  bool recurse = true;
+  if (info.Length() == 1 && info[0].IsBoolean()) {
+    recurse = info[0].As<Napi::Boolean>().Value();
+  }
+  return clone(info.Env(), recurse);
+}
+
 } // namespace libxmljs

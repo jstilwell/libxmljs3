@@ -1,3 +1,4 @@
+// Copyright 2009, Squish Tech, LLC.
 #ifndef SRC_XML_TEXT_H_
 #define SRC_XML_TEXT_H_
 
@@ -6,34 +7,51 @@
 
 namespace libxmljs {
 
-class XmlText : public XmlNode {
+class XmlText : public Napi::ObjectWrap<XmlText>, public XmlNode {
 public:
-  explicit XmlText(xmlNode *node);
+  using Napi::ObjectWrap<XmlText>::Unwrap;
+  static Napi::FunctionReference constructor;
 
-  static void Initialize(v8::Local<v8::Object> target);
+  XmlText(const Napi::CallbackInfo& info);
 
-  static Nan::Persistent<v8::FunctionTemplate> constructor_template;
+  static void Init(Napi::Env env, Napi::Object exports);
+  static Napi::Object New(Napi::Env env, xmlNode *node);
 
-  // create new xml element to wrap the node
-  static v8::Local<v8::Object> New(xmlNode *node);
+  // XmlNode virtual implementations
+  Napi::Object Value_() override { return Napi::ObjectWrap<XmlText>::Value(); }
+  void Ref_() override { Napi::ObjectWrap<XmlText>::Ref(); }
+  void Unref_() override { Napi::ObjectWrap<XmlText>::Unref(); }
+  int refs_() override { return 0; }
 
-protected:
-  static NAN_METHOD(New);
-  static NAN_METHOD(Text);
-  static NAN_METHOD(Replace);
-  static NAN_METHOD(Path);
-  static NAN_METHOD(Name);
+  // Delegated XmlNode methods
+  Napi::Value Doc(const Napi::CallbackInfo& i) { return Doc_Method(i); }
+  Napi::Value Parent(const Napi::CallbackInfo& i) { return Parent_Method(i); }
+  Napi::Value Namespace(const Napi::CallbackInfo& i) { return Namespace_Method(i); }
+  Napi::Value Namespaces(const Napi::CallbackInfo& i) { return Namespaces_Method(i); }
+  Napi::Value PrevSibling(const Napi::CallbackInfo& i) { return PrevSibling_Method(i); }
+  Napi::Value NextSibling(const Napi::CallbackInfo& i) { return NextSibling_Method(i); }
+  Napi::Value LineNumber(const Napi::CallbackInfo& i) { return LineNumber_Method(i); }
+  Napi::Value Type(const Napi::CallbackInfo& i) { return Type_Method(i); }
+  Napi::Value ToString(const Napi::CallbackInfo& i) { return ToString_Method(i); }
+  Napi::Value Remove(const Napi::CallbackInfo& i) { return Remove_Method(i); }
+  Napi::Value Clone(const Napi::CallbackInfo& i) { return Clone_Method(i); }
 
-  static NAN_METHOD(NextElement);
-  static NAN_METHOD(PrevElement);
-  static NAN_METHOD(AddPrevSibling);
-  static NAN_METHOD(AddNextSibling);
+  // Own methods
+  Napi::Value Text(const Napi::CallbackInfo& info);
+  Napi::Value Replace(const Napi::CallbackInfo& info);
+  Napi::Value Path(const Napi::CallbackInfo& info);
+  Napi::Value Name(const Napi::CallbackInfo& info);
+  Napi::Value NextElement(const Napi::CallbackInfo& info);
+  Napi::Value PrevElement(const Napi::CallbackInfo& info);
+  Napi::Value AddPrevSibling(const Napi::CallbackInfo& info);
+  Napi::Value AddNextSibling(const Napi::CallbackInfo& info);
 
-  v8::Local<v8::Value> get_next_element();
-  v8::Local<v8::Value> get_prev_element();
-  v8::Local<v8::Value> get_content();
-  v8::Local<v8::Value> get_path();
-  v8::Local<v8::Value> get_name();
+private:
+  Napi::Value get_next_element(Napi::Env env);
+  Napi::Value get_prev_element(Napi::Env env);
+  Napi::Value get_content(Napi::Env env);
+  Napi::Value get_path(Napi::Env env);
+  Napi::Value get_name(Napi::Env env);
   void set_content(const char *content);
   void replace_text(const char *content);
   void replace_element(xmlNode *element);

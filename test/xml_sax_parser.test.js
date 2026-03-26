@@ -7,8 +7,7 @@ function clone(obj) {
 
   const temp = new obj.constructor();
 
-  // eslint-disable-next-line guard-for-in,no-caller
-  for (const key in obj) temp[key] = arguments.callee(obj[key]);
+  for (const key in obj) temp[key] = clone(obj[key]);
 
   return temp;
 }
@@ -146,7 +145,7 @@ describe('xml sax parser', () => {
 
   it('sax', () => {
     const callbacks = clone(callbackTest);
-    // eslint-disable-next-line no-sync
+     
     const str = fs.readFileSync(filename, 'utf8');
     const parser = createParser('SaxParser', callbacks);
 
@@ -156,7 +155,7 @@ describe('xml sax parser', () => {
 
   it('sax_push_chunked', () => {
     const callbacks = clone(callbackTest);
-    // eslint-disable-next-line no-sync
+     
     const str_ary = fs.readFileSync(filename, 'utf8').split('\n');
     const parser = createParser('SaxPushParser', callbacks);
 
@@ -170,10 +169,9 @@ describe('xml sax parser', () => {
     expect(control).toEqual(callbacks);
   });
 
-  // eslint-disable-next-line jest/expect-expect
   it('string_parser', () => {
     const callbacks = clone(callbackTest);
-    // eslint-disable-next-line no-sync
+     
     const str = fs.readFileSync(filename, 'utf8');
     const parser = createParser('SaxParser', callbacks);
 

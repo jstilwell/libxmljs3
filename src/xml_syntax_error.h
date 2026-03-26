@@ -8,16 +8,24 @@
 
 namespace libxmljs {
 
+// Context struct passed as the void* userdata to libxml2's structured error
+// callback. Carries both the Napi::Env (needed to create JS values) and a
+// pointer to the Napi::Array that errors are pushed onto.
+struct XmlSyntaxErrorContext {
+  Napi::Env env;
+  Napi::Array *errors;
+};
+
 // basically being used like a namespace
 class XmlSyntaxError {
 public:
-  // push xmlError onto v8::Array
-  // helper method for xml library
-  static void PushToArray(void *errs, xmlError *error);
+  // push xmlError onto a Napi::Array
+  // Matches the xmlStructuredErrorFunc signature: void(*)(void*, xmlErrorPtr)
+  // The context pointer must be a XmlSyntaxErrorContext*.
+  static void PushToArray(void *context, xmlError *error);
 
-  // create a v8 object for the syntax eror
-  // TODO make it a v8 Erorr object
-  static v8::Local<v8::Value> BuildSyntaxError(xmlError *error);
+  // create a Napi Error object for the syntax error
+  static Napi::Value BuildSyntaxError(Napi::Env env, xmlError *error);
 };
 
 } // namespace libxmljs

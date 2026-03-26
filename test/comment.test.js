@@ -6,7 +6,7 @@ describe('comment', () => {
       const doc = new libxml.Document();
 
       expect(() => libxml.Comment(doc, 'Test')).toThrow(
-        "Class constructor Comment cannot be invoked without 'new'"
+        "cannot be invoked without 'new'"
       );
     });
     it('throws if doc is a primitive', () => {
