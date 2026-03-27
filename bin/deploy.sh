@@ -22,18 +22,9 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-# Ensure we're on main
 BRANCH="$(git branch --show-current)"
-if [[ "$BRANCH" != "main" ]]; then
-  echo "Error: must be on main branch (currently on '$BRANCH')"
-  exit 1
-fi
 
-# Pull latest
-echo "Pulling latest from origin..."
-git pull --ff-only origin main
-
-# Build and test
+# Build and test on current branch before merging
 echo "Building native addon..."
 pnpm run build
 
@@ -42,6 +33,18 @@ pnpm run build:ts
 
 echo "Running tests..."
 pnpm test
+
+# Merge into main if on a feature branch
+if [[ "$BRANCH" != "main" ]]; then
+  echo "Switching to main and merging '$BRANCH'..."
+  git checkout main
+  git pull --ff-only origin main
+  git merge --no-ff "$BRANCH" -m "Merge branch '$BRANCH'"
+  git branch -d "$BRANCH"
+else
+  echo "Pulling latest from origin..."
+  git pull --ff-only origin main
+fi
 
 # Bump version (updates package.json and creates git tag)
 echo "Bumping $BUMP version..."
