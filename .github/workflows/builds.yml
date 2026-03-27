@@ -99,15 +99,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-      - run: corepack enable
-      - run: pnpm i --frozen-lockfile
-        env:
-          npm_config_build_from_source: true
-      - run: pnpm build:ts
       - uses: actions/download-artifact@v4
         with:
           path: prebuilds
@@ -119,6 +110,3 @@ jobs:
           files: ./prebuilds/**/*.node
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: pnpm publish --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
