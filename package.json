@@ -12,7 +12,7 @@
   "scripts": {
     "build": "node-gyp rebuild",
     "build:ts": "tsc && tsc -p tsconfig.esm.json",
-    "prebuild": "prebuildify --napi",
+    "prebuild": "prebuildify --napi --tag-libc",
     "install": "node-gyp-build",
     "test": "vitest run",
     "tsd": "tsd",

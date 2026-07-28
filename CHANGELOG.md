@@ -36,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all now throw. The single-argument `namespace(null)` form still removes the
   namespace as documented.
 
+- **Prebuilt binaries now cover every supported platform.** Releases before
+  this one published prebuilds for `darwin-arm64` only (and 1.0.0 shipped only
+  a stale `libxmljs3.node`, so it had no loadable prebuild at all under the
+  current package name). Everyone else silently compiled from source on
+  install, which requires python and a C++ toolchain. The release now ships
+  prebuilds for macOS arm64, Linux x64/arm64 (glibc), Linux x64 (musl), and
+  Windows x64/arm64.
+- **Alpine/musl prebuilds are tagged correctly.** `prebuildify` now runs with
+  `--tag-libc`. Without it, the musl and glibc Linux x64 builds were both
+  named `linux-x64/libxmljs4.node`, so only one survived packaging and a musl
+  user could receive a glibc binary that fails to load.
+
 ### Changed
 
 - Upgraded to **TypeScript 7**. Both tsconfigs now set `"types": ["node"]`,
