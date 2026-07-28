@@ -25,6 +25,16 @@ module.exports = [
     },
   },
   {
+    // Tests deliberately reassign variables to drop references so the
+    // GC can collect the underlying native objects. ESLint 10 added
+    // no-useless-assignment to eslint:recommended, which flags exactly
+    // that pattern.
+    files: ['test/**/*.js'],
+    rules: {
+      'no-useless-assignment': 'off',
+    },
+  },
+  {
     ignores: ['build/', 'dist/', 'vendor/', 'prebuilds/'],
   },
 ];

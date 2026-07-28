@@ -9,6 +9,7 @@
     "declarationMap": false,
     "sourceMap": false,
     "strict": true,
+    "types": ["node"],
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,

@@ -41,6 +41,11 @@ libxmljs4 starts at version `1.0.0` (forked from libxmljs2 `0.37.0`). The major 
 - **Renamed package**: Published as `libxmljs4` (previously `libxmljs3`, forked from `libxmljs2`).
 - **Optimized native toString()**: Element and node `toString()` option parsing now caches property lookups instead of repeatedly querying the options object.
 - **Smaller npm package**: Disabled source maps and declaration maps from the published dist files.
+- **`namespace()` validates its href**: Passing a non-string href (for example `el.namespace('pref', null)`) throws a `TypeError`. In libxmljs2 this aborted the process with a fatal N-API error. The single-argument `namespace(null)` form still removes the namespace.
+- **Narrower Node.js support**: `engines.node` is `^22.22.2 || ^24.15.0 || >=26`.
+- **`node-gyp` is not a runtime dependency**: It is only needed to build from source, so it moved to `devDependencies`. Installing this package no longer pulls it in.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ## API Overview
 
