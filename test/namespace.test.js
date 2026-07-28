@@ -229,4 +229,48 @@ describe('namespace', () => {
     decls = body.namespaces(1);
     expect(decls.length).toBe(3);
   });
+
+  // Previously these aborted the process: XmlNamespace's constructor threw a
+  // JS exception, but with NAPI_DISABLE_CPP_EXCEPTIONS that does not unwind,
+  // so Namespace_Method went on to unwrap the half-constructed object with an
+  // exception still pending, which is a fatal N-API error.
+  describe('invalid href', () => {
+    const invalid = {
+      null: null,
+      undefined: undefined,
+      number: 42,
+      object: {},
+    };
+
+    for (const [label, value] of Object.entries(invalid)) {
+      it(`throws for a ${label} href with a prefix`, () => {
+        const elem = new libxml.Document().node('name1');
+
+        expect(() => elem.namespace('pref', value)).toThrow(TypeError);
+      });
+
+      // A single null argument is the documented "remove the namespace"
+      // form, so it is valid and excluded here.
+      if (value !== null) {
+        it(`throws for a ${label} href without a prefix`, () => {
+          const elem = new libxml.Document().node('name1');
+
+          expect(() => elem.namespace(value)).toThrow(TypeError);
+        });
+      }
+    }
+
+    it('leaves the node usable after throwing', () => {
+      const elem = new libxml.Document().node('name1');
+
+      expect(() => elem.namespace('pref', null)).toThrow(TypeError);
+
+      // The failed call must not have attached a namespace or corrupted the
+      // node, so a subsequent valid call still works.
+      expect(elem.namespace()).toBe(null);
+      expect(elem.namespace('http://my-namespace.com').namespace().href()).toBe(
+        'http://my-namespace.com'
+      );
+    });
+  });
 });

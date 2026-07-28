@@ -553,6 +553,17 @@ Napi::Value XmlNode::Namespace_Method(const Napi::CallbackInfo& info) {
 
   // Namespace not found — create a new one attached to this node.
   if (!ns) {
+    // The href is the last argument in both the one- and two-argument forms.
+    // XmlNamespace's constructor requires it to be a string; reject anything
+    // else here so the caller gets a useful message naming the argument,
+    // rather than the constructor's generic one.
+    Napi::Value href = info.Length() == 1 ? info[0] : info[1];
+    if (!href.IsString()) {
+      Napi::TypeError::New(env, "namespace href must be a string")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+
     std::vector<napi_value> argv;
     argv.push_back(Value_());  // the JS object for this node
 
@@ -565,6 +576,15 @@ Napi::Value XmlNode::Namespace_Method(const Napi::CallbackInfo& info) {
     }
 
     Napi::Object new_ns = XmlNamespace::constructor.New(argv);
+
+    // This addon is built with NAPI_DISABLE_CPP_EXCEPTIONS, so a throwing
+    // constructor does not unwind — it returns with a JS exception pending.
+    // Unwrapping the half-constructed object in that state aborts the
+    // process, so bail out and let the pending exception surface.
+    if (env.IsExceptionPending()) {
+      return env.Null();
+    }
+
     ns = XmlNamespace::Unwrap(new_ns);
   }
 
