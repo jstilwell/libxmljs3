@@ -111,16 +111,32 @@ Correct order for a release:
 1. Push the branch, open a PR, let the CI test matrix run.
 2. Merge to `main` and push the `v*` tag.
 3. Wait for the `deploy` job to finish building all six platforms.
-4. Download the GitHub Release artifacts into `prebuilds/`.
+4. Download `libxmljs4-prebuilds-<tag>.tar.gz` from the GitHub Release and
+   unpack it into `prebuilds/`.
 5. Verify coverage (`find prebuilds -type f` should list every platform,
    not just the local one), then `npm publish`.
+
+The `deploy` job ships prebuilds as a **single tarball**, not as individual
+`.node` assets. Every platform's binary is named `libxmljs4.node` and is
+distinguished only by its parent directory, so uploading them individually
+flattens them into one asset name where they overwrite each other — v2.0.0's
+first release attempt published five binaries and kept one, with no way to
+tell which platform it came from. The job also asserts that every expected
+platform, plus a musl-tagged build, is present before packaging.
+
+`prebuildify` must be run with `--tag-libc`. Alpine builds into `linux-x64`
+just like Ubuntu does, so without the libc tag both produce
+`linux-x64/libxmljs4.node` and the `merge-multiple` download silently keeps
+only one. `node-gyp-build` selects a prebuild by a `glibc`/`musl` filename
+tag, so an untagged tree can hand a musl user a glibc binary that fails to
+load.
 
 Other release gotchas:
 
 - **`bin/deploy.sh` bumps the version itself** via `npm version <bump>`. Do not
   run it if `package.json` has already been bumped and tagged manually — it
   will bump a second time. The script also merges into `main`, pushes, and
-  publishes in one shot, so it publishes *before* CI prebuilds exist. It is
+  publishes in one shot, so it publishes _before_ CI prebuilds exist. It is
   only appropriate for a release where local-platform-only prebuilds are
   acceptable.
 - **Check `prebuilds/` for stale artifacts** before publishing. A

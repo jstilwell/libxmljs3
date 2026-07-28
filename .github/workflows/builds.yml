@@ -105,8 +105,34 @@ jobs:
           pattern: "*-prebuild"
           merge-multiple: true
       - run: find prebuilds -type f | head -50
+      # Every platform's binary is named libxmljs4.node and is distinguished
+      # only by its parent directory, so uploading them as individual release
+      # assets flattens them into a single name and they overwrite each other.
+      # Ship one tarball that preserves the directory structure instead; it is
+      # what `pnpm publish` needs to unpack into prebuilds/ before publishing.
+      - name: Check every expected platform is present
+        run: |
+          set -euo pipefail
+          missing=0
+          for p in darwin-arm64 linux-x64 linux-arm64 win32-x64 win32-arm64; do
+            if [ -z "$(find "prebuilds/$p" -name '*.node' -print -quit 2>/dev/null)" ]; then
+              echo "MISSING: prebuilds/$p"
+              missing=1
+            fi
+          done
+          # Alpine builds into linux-x64 alongside the glibc build, so assert
+          # the musl-tagged file specifically rather than just the directory.
+          if [ -z "$(find prebuilds -name '*.musl.node' -print -quit)" ]; then
+            echo "MISSING: any musl-tagged prebuild"
+            missing=1
+          fi
+          exit $missing
+      - name: Package prebuilds
+        env:
+          TAG: ${{ github.ref_name }}
+        run: tar -czf "libxmljs4-prebuilds-$TAG.tar.gz" -C prebuilds .
       - uses: softprops/action-gh-release@v2
         with:
-          files: ./prebuilds/**/*.node
+          files: libxmljs4-prebuilds-*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
